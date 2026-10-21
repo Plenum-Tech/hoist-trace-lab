@@ -26,6 +26,9 @@ export function accessValue(member) {
   return member && member.status === 'active' ? member.role : '';
 }
 export const NOTE_MAX = 2000;
+export const EXPECTED_MAX = 2000;
+export const GROUP_MIN = 2;
+export const GROUP_MAX = 30;
 
 const KIND_TEXT = { user: 'Question', answer: 'Answer', model: 'Model call', tool: 'Tool', db: 'Database query', plan: 'Plan',
   step: 'Step', note: 'Step' };
@@ -146,7 +149,8 @@ export function labelView(x, me) {
   return {
     id: x.id, lineage: x.lineage_id || x.id, label: x.label, labelText: LABEL_TEXT[x.label] || x.label, note: x.note || '',
     quote: x.quote || '', who: x.reviewer_email || 'Someone', role: ROLE_TEXT[x.reviewer_role] || x.reviewer_role,
-    when: when(x.at), edited: !!x.edited, mine: !!me && x.reviewer_id === me, raw: x
+    when: when(x.at), edited: !!x.edited, mine: !!me && x.reviewer_id === me, raw: x,
+    expected: x.expected || '', onlyIf: x.only_if || '', group: x.group_id || ''
   };
 }
 
@@ -159,6 +163,28 @@ export function labelsByStep(labels, me) {
   });
   Object.keys(out).forEach((k) => out[k].sort((a, b) => (a.mine === b.mine ? 0 : a.mine ? -1 : 1)));
   return out;
+}
+
+// The steps each group label covers on this answer, by step number: { [group_id]: [8, 9, 12] }.
+export function groupsOf(labels, steps) {
+  const n = {};
+  (steps || []).forEach((st) => { n[st.key] = st.n; });
+  const out = {};
+  (labels || []).forEach((x) => {
+    if (!x || x.cleared || !x.group_id || !(x.step_key in n)) return;
+    const list = out[x.group_id] || (out[x.group_id] = []);
+    if (list.indexOf(n[x.step_key]) < 0) list.push(n[x.step_key]);
+  });
+  Object.keys(out).forEach((g) => out[g].sort((a, b) => a - b));
+  return out;
+}
+
+// "Steps 8, 9 and 12" for a list of step numbers.
+export function stepsText(ns) {
+  const list = (ns || []).slice();
+  if (!list.length) return '';
+  if (list.length === 1) return 'Step ' + list[0];
+  return 'Steps ' + list.slice(0, -1).join(', ') + ' and ' + list[list.length - 1];
 }
 
 // How many steps of an answer carry at least one label of the caller's.

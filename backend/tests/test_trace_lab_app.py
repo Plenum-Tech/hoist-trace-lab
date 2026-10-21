@@ -2,6 +2,8 @@
 image that runs it (G0 addendum 2.1). No database, no network."""
 from __future__ import annotations
 
+import pytest
+
 import json
 import os
 import subprocess
@@ -70,6 +72,32 @@ def test_importing_the_app_does_no_database_io_and_loads_no_deepagents_app():
                           check=True, timeout=120, env=env)
     out = json.loads(done.stdout.strip().splitlines()[-1])
     assert out == {"engine": None, "main": False}
+
+
+# Hoistra's own image of Trace Lab. The standalone repository (hoist-trace-lab) builds from its root Dockerfile instead,
+# checked by its test_repo_packaging.py, so these two skip there.
+@pytest.mark.skipif(not (TL_ROOT / "Dockerfile").is_file(), reason="Hoistra's svc-trace-lab/Dockerfile is not in this tree")
+def test_the_dockerfile_builds_beside_svc_deepagents_and_runs_the_app():
+    text = (TL_ROOT / "Dockerfile").read_text(encoding="utf-8")
+    assert "FROM python:3.12" in text
+    assert "COPY svc-deepagents/pyproject.toml" in text and "da['project']['dependencies']" in text
+    assert "COPY svc-deepagents/src /app/svc-deepagents/src" in text
+    assert "COPY svc-deepagents/skills /app/svc-deepagents/skills" in text
+    assert "COPY svc-trace-lab /app/svc-trace-lab" in text
+    assert "PYTHONPATH=/app/svc-trace-lab:/app/svc-deepagents" in text
+    cmd = json.loads(next(line for line in text.splitlines() if line.startswith("CMD "))[4:])
+    assert cmd[:2] == ["uvicorn", "trace_lab.app:app"]
+    assert cmd[cmd.index("--port") + 1] == "8010"
+    assert cmd[cmd.index("--root-path") + 1] == "/backend/trace-lab"
+    assert ".env" not in text.replace("No .env file is copied", "")
+    assert "pip install -e" not in text
+
+
+@pytest.mark.skipif(not (TL_ROOT / "Dockerfile.dockerignore").is_file(), reason="Hoistra's svc-trace-lab image is not in this tree")
+def test_the_build_ignores_caches_and_env_files():
+    lines = (TL_ROOT / "Dockerfile.dockerignore").read_text(encoding="utf-8").splitlines()
+    for pattern in ("**/__pycache__/", "**/.env", "**/.env.*", "svc-ai-schema-mapper/engine/bin/"):
+        assert pattern in lines, pattern
 
 
 def test_pyproject_names_the_direct_dependencies():

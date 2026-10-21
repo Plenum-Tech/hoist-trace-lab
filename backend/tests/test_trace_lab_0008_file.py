@@ -38,3 +38,13 @@ def test_0009_lets_one_person_give_several_labels_on_a_step():
     assert "DROP INDEX tracelab.ux_tl_step_labels_head;" in f9.sql
     assert "ON tracelab.step_labels ((coalesce(lineage_id, id)))" in f9.sql
     assert "ADD COLUMN quote text" in f9.sql and "ADD COLUMN lineage_id uuid" in f9.sql
+
+
+def test_0010_adds_what_should_happen_when_and_groups_without_a_new_table():
+    found = {f.version: f for f in migrate.files()}
+    f10 = found[10]
+    assert f10.name == "0010_label_groups.sql" and migrate.lint(f10) == []
+    for col in ("ADD COLUMN group_id uuid", "ADD COLUMN expected text", "ADD COLUMN only_if text"):
+        assert col in f10.sql, col
+    assert "CREATE TABLE" not in f10.sql and "DROP" not in f10.sql, "columns only: nothing removed, nothing new to guard"
+    assert re.search(r"CREATE INDEX ix_tl_step_labels_group ON tracelab\.step_labels \(organization_id, group_id\)", f10.sql)

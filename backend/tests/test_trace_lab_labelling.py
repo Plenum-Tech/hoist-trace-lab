@@ -92,6 +92,27 @@ def test_a_member_reads_the_whole_company_and_a_superadmin_reads_as_themselves()
     assert labelling.company_view(boss, ORG) is boss
 
 
+def test_what_should_happen_and_when_are_trimmed_optional_and_bounded():
+    assert labelling.validate_expected("  count only this company's vendors ", "  the question names a vendor ") == (
+        "count only this company's vendors", "the question names a vendor")
+    assert labelling.validate_expected("   ", None) == (None, None)
+    with pytest.raises(Invalid):
+        labelling.validate_expected("x" * 2001, None)
+    with pytest.raises(Invalid):
+        labelling.validate_expected(None, "y" * 2001)
+
+
+def test_a_group_is_two_to_thirty_different_steps_each_with_its_own_rule():
+    two = [{"step_key": "t:a:query", "expected": " filter by company ", "only_if": "a vendor is named"},
+           {"step_key": "t:b:query", "step_title": " count "}]
+    out = labelling.validate_group(two)
+    assert [(x["key"], x["title"], x["expected"], x["only_if"]) for x in out] == [
+        ("t:a:query", None, "filter by company", "a vendor is named"), ("t:b:query", "count", None, None)]
+    for bad in ([two[0]], [two[0], dict(two[0])], [{"step_key": f"t:{i}:q"} for i in range(31)], [two[0], {"step_key": ""}]):
+        with pytest.raises(Invalid):
+            labelling.validate_group(bad)
+
+
 def test_the_csv_names_who_did_what_and_cannot_run_formulas():
     rows = [{"at": "2026-10-20T10:00:00Z", "question": "=HYPERLINK(1)", "step_title": "Records query", "step_kind": "db_query",
              "label": "wrong", "note": "+cmd", "reviewer_email": "exp@x.test", "reviewer_role": "domain_expert",
@@ -101,3 +122,4 @@ def test_the_csv_names_who_did_what_and_cannot_run_formulas():
     assert parsed[0] == list(labelling.CSV_HEADER)
     assert parsed[1][1] == "'=HYPERLINK(1)" and parsed[1][6] == "'+cmd" and parsed[1][4] == "'-1 rows"
     assert parsed[1][5] == "Wrong" and parsed[1][7] == "exp@x.test" and parsed[1][8] == "Domain expert"
+    assert parsed[0][-3:] == ["What should happen", "Only if", "Group"], "new columns go last, so old columns keep their place"

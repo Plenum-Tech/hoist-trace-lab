@@ -7,6 +7,8 @@ src/lab/LabApp.jsx
 src/lab/People.jsx
 src/lab/Questions.jsx
 src/lab/TraceLabAccess.jsx
+src/lab/__tests__/labAuth.test.mjs
+src/lab/__tests__/labelling.test.mjs
 src/lab/authFlow.js
 src/lab/lab.css
 src/lab/labApi.js

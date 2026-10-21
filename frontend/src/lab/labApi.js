@@ -23,6 +23,8 @@ export const labApi = {
   saveLabel: (turnId, body) => call('PUT', '/lab/turns/' + enc(turnId) + '/step-labels', { body }),
   clearLabel: (turnId, lineageId, base) => call('DELETE', '/lab/turns/' + enc(turnId) + '/step-labels',
     { query: { lineage_id: lineageId, base } }),
+  saveGroup: (turnId, body) => call('PUT', '/lab/turns/' + enc(turnId) + '/step-label-groups', { body }),
+  clearGroup: (turnId, groupId) => call('DELETE', '/lab/turns/' + enc(turnId) + '/step-label-groups/' + enc(groupId)),
   all: (query) => call('GET', '/lab/step-labels', { query }),
   csv: (query) => call('GET', '/lab/step-labels.csv', { query, raw: true, timeoutMs: 60000 })
 };

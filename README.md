@@ -79,7 +79,7 @@ On a platform without compose, set those too. They are listed in `docker-compose
 ```sh
 docker compose up -d --build
 docker compose exec trace-lab python -m trace_lab.migrate status
-docker compose exec trace-lab python -m trace_lab.migrate apply --expect-db hoist_tracelab --through 0009 --applied-by bala
+docker compose exec trace-lab python -m trace_lab.migrate apply --expect-db hoist_tracelab --through 0010 --applied-by bala
 ```
 
 - Boot never changes the database. Until the migrations are applied, the service starts and reports itself
@@ -93,7 +93,7 @@ docker compose exec trace-lab python -m trace_lab.migrate apply --expect-db hois
 ### 4. Check it
 
 ```sh
-docker compose logs trace-lab | grep -E "schema|startup"      # trace_lab.startup.done ... status=ready version=9
+docker compose logs trace-lab | grep -E "schema|startup"      # trace_lab.startup.done ... status=ready version=10
 curl -s http://localhost:8080/backend/trace-lab/health        # {"ok":true,"service":"trace-lab"}
 ```
 

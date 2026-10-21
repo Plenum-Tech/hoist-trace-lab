@@ -4,7 +4,8 @@
 #   scripts/sync-from-hoistra.sh /path/to/Hoistra_Plenum
 #
 # Copies, overwriting what is here:
-#   apps/backend/cafm-connector-service-final/svc-trace-lab        -> backend/   (its own Dockerfile is not taken)
+#   apps/backend/cafm-connector-service-final/svc-trace-lab        -> backend/   (not Hoistra's own image, audit,
+#                                                                     runbook or the tests that read Hoistra's tree)
 #   apps/backend/cafm-connector-service-final/svc-deepagents/src,  -> vendor/svc-deepagents/
 #     skills and pyproject.toml
 #   the frontend files listed in scripts/frontend-files.txt         -> frontend/
@@ -19,8 +20,12 @@ FRONT="$HOISTRA/apps/frontend"
 
 [ -d "$BACK/svc-trace-lab/trace_lab" ] || { echo "not a Hoistra checkout: $HOISTRA" >&2; exit 1; }
 
+# Hoistra-only files stay out: its image and README, its Golden Rule audit and runbook, and the tests that read
+# Hoistra's tree.
 rsync -a --exclude __pycache__ --exclude .pytest_cache --exclude Dockerfile --exclude Dockerfile.dockerignore \
-    --exclude 'ops/g0_audit*' "$BACK/svc-trace-lab/" "$HERE/backend/"
+    --exclude /README.md --exclude 'ops/g0_audit*' --exclude ops/README.md --exclude tests/test_trace_lab_ops_files.py \
+    --exclude 'tests/test_trace_lab_g0_audit*' --exclude tests/test_trace_lab_golden_rule.py \
+    --exclude tests/test_trace_lab_azure_attachments.py "$BACK/svc-trace-lab/" "$HERE/backend/"
 rsync -a --exclude __pycache__ "$BACK/svc-deepagents/src" "$BACK/svc-deepagents/skills" \
     "$BACK/svc-deepagents/pyproject.toml" "$HERE/vendor/svc-deepagents/"
 rsync -a --files-from="$HERE/scripts/frontend-files.txt" "$FRONT/" "$HERE/frontend/"

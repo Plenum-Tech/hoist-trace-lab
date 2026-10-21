@@ -1,8 +1,9 @@
 // AllLabels — every label collected, across the full page: count tiles that double as the label filter (All, Right, Wrong,
 // Not sure), a filter bar (person, role, words, period) that applies as soon as a choice is made, and one table row per
-// label: when, which question and step, the selected text, the label and note, who gave it with their Trace Lab role, and
-// "Open" to jump to that step on Questions. Admins see everyone's labels; everyone else sees their own. A CSV download of
-// the same filter (up to 500 rows).
+// label: when, which question and step, the selected text, the label and note (with what should happen and when), who gave it
+// with their Trace Lab role, "Open" to jump to that step on Questions, and "Delete" on the person's own labels (a label
+// given with other steps can be deleted alone or with its group). Admins see everyone's labels; everyone else sees their
+// own. A CSV download of the same filter (up to 500 rows).
 import React from 'react';
 import { labApi } from './labApi.js';
 import { LABEL_CHOICES, ROLE_CHOICES, errText, labelView } from './logic/labelling.js';
@@ -42,7 +43,22 @@ export function Clamp({ text, children }) {
   );
 }
 
-export function LabelsTable({ rows, onOpen }) {
+// Delete, asked once: a label on one step is deleted or kept; a label given with other steps can go alone or with them.
+function DeleteCell({ x, confirming, busy, onAsk, onDelete }) {
+  if (!confirming) {
+    return <button type="button" className="lab-link lab-danger" onClick={() => onAsk(x.id)} disabled={busy}>{'Delete'}</button>;
+  }
+  return (
+    <span className="lab-confirm" role="group" aria-label="Delete this label?">
+      <span className="lab-small">{x.group_id ? 'Delete:' : 'Delete it?'}</span>
+      <button type="button" className="lab-link lab-danger" onClick={() => onDelete(x, 'one')} disabled={busy}>{x.group_id ? 'This step' : 'Yes'}</button>
+      {x.group_id ? <button type="button" className="lab-link lab-danger" onClick={() => onDelete(x, 'group')} disabled={busy}>{'Whole group'}</button> : null}
+      <button type="button" className="lab-link" onClick={() => onAsk(null)} disabled={busy}>{x.group_id ? 'Cancel' : 'No'}</button>
+    </span>
+  );
+}
+
+export function LabelsTable({ rows, onOpen, me, confirming, busy, onAsk, onDelete }) {
   return (
     <div className="lab-table-wrap lab-table-full">
       <table className="lab-table">
@@ -56,19 +72,28 @@ export function LabelsTable({ rows, onOpen }) {
                 <td className="lab-cell-q">
                   <div className="lab-cell-main">{x.question || '—'}</div>
                   <div className="lab-small">{x.step_title || x.step_kind}</div>
+                  {x.group_id ? <span className="lab-tag lab-tag-group">{'Labelled with other steps'}</span> : null}
                 </td>
                 <td className="lab-cell-quote">{x.quote
                   ? <Clamp text={x.quote}><span className="lab-quote-inline">{'“' + x.quote + '”'}</span></Clamp>
                   : <span className="lab-muted">{'Whole step'}</span>}</td>
                 <td><span className={'lab-tag lab-tag-' + x.label}>{v.labelText}</span></td>
-                <td className="lab-cell-note">{v.note ? <Clamp text={v.note}>{v.note}</Clamp> : <span className="lab-muted">{'—'}</span>}</td>
+                <td className="lab-cell-note">
+                  {v.note ? <Clamp text={v.note}>{v.note}</Clamp> : (v.expected || v.onlyIf ? null : <span className="lab-muted">{'—'}</span>)}
+                  {v.expected ? <div className="lab-small lab-only-if"><strong>{'Should: '}</strong><Clamp text={v.expected}>{v.expected}</Clamp></div> : null}
+                  {v.onlyIf ? <div className="lab-small lab-only-if"><strong>{'Only if: '}</strong>{v.onlyIf}</div> : null}
+                </td>
                 <td className="lab-cell-who">
                   <div className="lab-cell-main">{v.who}</div>
                   <div className="lab-small">{v.role + (v.edited ? ' · edited' : '')}</div>
                 </td>
                 <td className="lab-nowrap">
-                  {onOpen && x.conversation_key ? <button type="button" className="lab-link" onClick={() => onOpen(x)}
-                    aria-label={'Open the step for ' + (x.question || 'this label')}>{'Open'}</button> : null}
+                  <div className="lab-cell-actions">
+                    {onOpen && x.conversation_key ? <button type="button" className="lab-link" onClick={() => onOpen(x)}
+                      aria-label={'Open the step for ' + (x.question || 'this label')}>{'Open'}</button> : null}
+                    {onDelete && me && x.reviewer_id === me ? <DeleteCell x={x} confirming={confirming === x.id} busy={busy} onAsk={onAsk}
+                      onDelete={onDelete} /> : null}
+                  </div>
                 </td>
               </tr>
             );
@@ -100,6 +125,8 @@ export default function AllLabels({ onOpen, onQuestions }) {
   const [applied, setApplied] = React.useState(EMPTY);
   const [res, setRes] = React.useState({ rows: [], total: 0, all: 0, byLabel: {}, everyone: false, loading: true, error: '', offset: 0 });
   const [csvBusy, setCsvBusy] = React.useState(false);
+  const [confirming, setConfirming] = React.useState(null);
+  const [deleting, setDeleting] = React.useState(false);
   const ask = React.useRef(0);
 
   const query = (g, offset) => ({ reviewer: g.reviewer.trim() || undefined, role: g.role || undefined, label: g.label || undefined,
@@ -117,7 +144,8 @@ export default function AllLabels({ onOpen, onQuestions }) {
       if (mine !== ask.current) return;
       const base = split || out;
       setRes({ rows: (out && out.labels) || [], total: (out && out.total) || 0, all: (base && base.total) || 0,
-        byLabel: (base && base.by_label) || {}, everyone: !!(out && out.everyone), loading: false, error: '', offset });
+        byLabel: (base && base.by_label) || {}, everyone: !!(out && out.everyone), me: (out && out.me) || null, loading: false,
+        error: '', offset });
     } catch (e) {
       if (mine === ask.current) setRes((p) => Object.assign({}, p, { loading: false, error: errText(e) }));
     }
@@ -131,6 +159,24 @@ export default function AllLabels({ onOpen, onQuestions }) {
   const setLabel = (label) => { const g = Object.assign({}, f, { label }); setF(g); load(g, 0); };
   const clear = () => { setF(EMPTY); load(EMPTY, 0); };
   const filtered = Object.keys(EMPTY).some((k) => (applied[k] || '').trim());
+
+  // Delete one of my labels, or every label of its group; then read the same page again (the counts change too).
+  const onDelete = async (x, scope) => {
+    setDeleting(true);
+    try {
+      if (scope === 'group' && x.group_id) await labApi.clearGroup(x.turn_id, x.group_id);
+      else await labApi.clearLabel(x.turn_id, x.lineage_id || x.id, x.id);
+      setConfirming(null);
+      const offset = res.rows.length === 1 && res.offset > 0 ? Math.max(0, res.offset - PAGE) : res.offset;
+      await load(applied, offset);
+    } catch (e) {
+      setRes((p) => Object.assign({}, p, { error: e && e.status === 409 ? 'This label changed in another window. The list has been read again.' : errText(e) }));
+      setConfirming(null);
+      load(applied, res.offset);
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   const download = async () => {
     setCsvBusy(true);
@@ -180,7 +226,7 @@ export default function AllLabels({ onOpen, onQuestions }) {
           </select>
         </label>
         <label className="lab-field lab-field-grow"><span>{'Words'}</span>
-          <input type="search" value={f.q} onChange={type('q')} onBlur={commit} placeholder="In the question, step, selected text or note, then Enter" />
+          <input type="search" value={f.q} onChange={type('q')} onBlur={commit} placeholder="In the question, step, selected text, note or what should happen, then Enter" />
         </label>
         <label className="lab-field"><span>{'From'}</span><input type="date" value={f.since} onChange={pick('since')} /></label>
         <label className="lab-field"><span>{'To'}</span><input type="date" value={f.until} onChange={pick('until')} /></label>
@@ -194,7 +240,8 @@ export default function AllLabels({ onOpen, onQuestions }) {
       {res.rows.length ? (
         <>
           <p className="lab-small" aria-live="polite">{res.loading ? 'Reading…' : 'Showing ' + (res.offset + 1) + '–' + last + ' of ' + res.total.toLocaleString('en-GB')}</p>
-          <LabelsTable rows={res.rows} onOpen={onOpen} />
+          <LabelsTable rows={res.rows} onOpen={onOpen} me={res.me} confirming={confirming} busy={deleting} onAsk={setConfirming}
+            onDelete={onDelete} />
         </>
       ) : null}
       {res.total > PAGE ? (

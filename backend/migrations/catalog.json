@@ -3065,6 +3065,18 @@
     "notnull": true,
     "type": "timestamp with time zone"
    },
+   "expected": {
+    "default": null,
+    "identity": "",
+    "notnull": false,
+    "type": "text"
+   },
+   "group_id": {
+    "default": null,
+    "identity": "",
+    "notnull": false,
+    "type": "uuid"
+   },
    "id": {
     "default": "gen_random_uuid()",
     "identity": "",
@@ -3084,6 +3096,12 @@
     "type": "uuid"
    },
    "note": {
+    "default": null,
+    "identity": "",
+    "notnull": false,
+    "type": "text"
+   },
+   "only_if": {
     "default": null,
     "identity": "",
     "notnull": false,
@@ -4420,12 +4438,20 @@
    "def": "CHECK (((char_length(conversation_key) >= 1) AND (char_length(conversation_key) <= 400)))",
    "type": "c"
   },
+  "step_labels.step_labels_expected_check": {
+   "def": "CHECK (((expected IS NULL) OR ((char_length(expected) >= 1) AND (char_length(expected) <= 2000))))",
+   "type": "c"
+  },
   "step_labels.step_labels_label_check": {
    "def": "CHECK ((label = ANY (ARRAY['right'::text, 'wrong'::text, 'unsure'::text])))",
    "type": "c"
   },
   "step_labels.step_labels_note_check": {
    "def": "CHECK (((note IS NULL) OR (char_length(note) <= 2000)))",
+   "type": "c"
+  },
+  "step_labels.step_labels_only_if_check": {
+   "def": "CHECK (((only_if IS NULL) OR ((char_length(only_if) >= 1) AND (char_length(only_if) <= 2000))))",
    "type": "c"
   },
   "step_labels.step_labels_pkey": {
@@ -4716,6 +4742,10 @@
    "def": "CREATE INDEX ix_tl_runs_job ON tracelab.proposal_runs USING btree (job_id)",
    "table": "proposal_runs"
   },
+  "ix_tl_step_labels_group": {
+   "def": "CREATE INDEX ix_tl_step_labels_group ON tracelab.step_labels USING btree (organization_id, group_id) WHERE ((group_id IS NOT NULL) AND (superseded_by IS NULL))",
+   "table": "step_labels"
+  },
   "ix_tl_step_labels_org_time": {
    "def": "CREATE INDEX ix_tl_step_labels_org_time ON tracelab.step_labels USING btree (organization_id, created_at DESC)",
    "table": "step_labels"
@@ -4983,5 +5013,5 @@
   "step_labels.step_labels_no_truncate": "CREATE TRIGGER step_labels_no_truncate BEFORE TRUNCATE ON tracelab.step_labels FOR EACH STATEMENT EXECUTE FUNCTION tracelab.supersede_only()",
   "step_labels.step_labels_supersede_only": "CREATE TRIGGER step_labels_supersede_only BEFORE DELETE OR UPDATE ON tracelab.step_labels FOR EACH ROW EXECUTE FUNCTION tracelab.supersede_only()"
  },
- "version": 9
+ "version": 10
 }

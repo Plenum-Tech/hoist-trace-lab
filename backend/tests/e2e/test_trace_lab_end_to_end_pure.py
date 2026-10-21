@@ -195,6 +195,8 @@ NOT_DRIVEN = {
     "/lab/me": "step labelling (20 Oct): covered by test_trace_lab_labelling_sql", "/lab/members": "same",
     "/lab/members/{user_id}": "same", "/lab/questions": "same", "/lab/questions/{key:path}": "same",
     "/lab/turns/{turn_id}/step-labels": "same", "/lab/step-labels": "same", "/lab/step-labels.csv": "same",
+    "/lab/turns/{turn_id}/step-label-groups": "group labels (21 Oct): covered by test_trace_lab_labelling_sql",
+    "/lab/turns/{turn_id}/step-label-groups/{group_id}": "same",
 }
 
 

@@ -10,6 +10,9 @@ router under /api/trace-lab (ROUTERS):
     GET    /lab/turns/{turn_id}/step-labels         everyone's labels on one answer's steps             (active members)
     PUT    /lab/turns/{turn_id}/step-labels         a new label (whole step or selected text) or an edit (active members)
     DELETE /lab/turns/{turn_id}/step-labels         remove one of the caller's labels                    (active members)
+    PUT    /lab/turns/{turn_id}/step-label-groups   several steps labelled together, each with what should happen and
+                                                    when                                                 (active members)
+    DELETE /lab/turns/{turn_id}/step-label-groups/{group_id}  remove one of the caller's groups          (active members)
     GET    /lab/step-labels                         every label, filtered (admins: everyone's; others: their own)
     GET    /lab/step-labels.csv                     the same as a CSV download
 
@@ -58,6 +61,21 @@ class LabelBody(BaseModel):
     quote: str | None = Field(None, max_length=4000)
     lineage_id: str | None = Field(None, max_length=64)
     base: str | None = Field(None, max_length=64)
+    expected: str | None = Field(None, max_length=4000)
+    only_if: str | None = Field(None, max_length=4000)
+
+
+class GroupItem(BaseModel):
+    step_key: str = Field(..., min_length=1, max_length=300)
+    step_title: str | None = Field(None, max_length=1000)
+    expected: str | None = Field(None, max_length=4000)
+    only_if: str | None = Field(None, max_length=4000)
+
+
+class GroupBody(BaseModel):
+    label: str = Field(..., max_length=20)
+    note: str | None = Field(None, max_length=4000)
+    items: list[GroupItem] = Field(..., min_length=1, max_length=60)
 
 
 @router.get("/lab/me")
@@ -111,7 +129,7 @@ async def lab_turn_labels(turn_id: str, m: labelling.Member = Depends(_member)) 
 async def lab_save_label(turn_id: str, body: LabelBody, m: labelling.Member = Depends(_member)) -> dict[str, Any]:
     out = await _call(labelling.save_label(m, turn_id, step_key=body.step_key, label=body.label, note=body.note,
                                            step_title=body.step_title, quote=body.quote, lineage_id=body.lineage_id,
-                                           base=body.base))
+                                           base=body.base, expected=body.expected, only_if=body.only_if))
     return {"ok": True, "label": out}
 
 
@@ -119,6 +137,18 @@ async def lab_save_label(turn_id: str, body: LabelBody, m: labelling.Member = De
 async def lab_clear_label(turn_id: str, lineage_id: str = Query(..., min_length=1, max_length=64),
                           base: str = Query(..., max_length=64), m: labelling.Member = Depends(_member)) -> dict[str, Any]:
     return {"ok": True, "label": await _call(labelling.clear_label(m, turn_id, lineage_id=lineage_id, base=base))}
+
+
+@router.put("/lab/turns/{turn_id}/step-label-groups")
+async def lab_save_group(turn_id: str, body: GroupBody, m: labelling.Member = Depends(_member)) -> dict[str, Any]:
+    out = await _call(labelling.save_group(m, turn_id, label=body.label, note=body.note,
+                                           items=[i.model_dump() for i in body.items]))
+    return {"ok": True, "labels": out}
+
+
+@router.delete("/lab/turns/{turn_id}/step-label-groups/{group_id}")
+async def lab_clear_group(turn_id: str, group_id: str, m: labelling.Member = Depends(_member)) -> dict[str, Any]:
+    return {"ok": True, **await _call(labelling.clear_group(m, turn_id, group_id=group_id))}
 
 
 def _list_args(reviewer: str | None, role: str | None, label: str | None, since: datetime | None,

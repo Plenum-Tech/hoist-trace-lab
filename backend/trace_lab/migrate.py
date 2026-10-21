@@ -59,7 +59,19 @@ SCRATCH_HOSTS = frozenset({"localhost", "127.0.0.1", "host.docker.internal"})
 #: Checksums of the files applied to a shared Trace Lab database. Append only: a pinned file is
 #: never edited (tests/test_trace_lab_migrate.py::test_shipped_files_are_never_edited); a
 #: correction is a new file. After Hussain applies a file, the CLI prints the line to add here.
-SHIPPED_CHECKSUMS: dict[int, str] = {}
+SHIPPED_CHECKSUMS: dict[int, str] = {
+    # 0001-0009 applied to hoist_tracelab on Azure (plenum-agentic-ai) by Bala when Trace Lab was first deployed, 21 Oct 2026.
+    1: "5e8edee750541f1e7b41a663b2895c81b8a68321826ae907438fedfc6c536df3",  # 0001_foundation.sql
+    2: "f9750e7e4292448d4bd97e28219740569b6024131ee5ce2763d87546549bedd2",  # 0002_golden.sql
+    3: "d0dc2fcf45d07ec0e9902b3b41a6167362e672baf546b386b0d7202531585436",  # 0003_review.sql
+    4: "70cfd9c9e6109794bbbae3d4708d2d2ba6cc5db7d58658ab47bc0e59d7d215a0",  # 0004_taxonomy.sql
+    5: "66fed96f7f0e05d7d8c65d9b81f238dea1de069a87a30bc331798cd56bd410c2",  # 0005_judges.sql
+    6: "c5967b4791bd6c28d16e539b2edb882e05394bcd5ec3622eeb215f23957f4bce",  # 0006_watch.sql
+    7: "9145541f5caa2c058dbc638db0e52197e45a2f63e0fd554b272c180396912938",  # 0007_judge_floor.sql
+    8: "7d2ede6d043ebe28ad088077bec812fe56e141c17b0eefe9772d8ecc6db716c6",  # 0008_step_labels.sql
+    9: "56d1a49b40e2639a57358d4c0e38a598e4d5809100da9e4a15d3819181c5ddd2",  # 0009_label_quotes.sql
+    10: "cbb9c34a2d63da1841c26056b27583141a93ceb245bb954d289d063b6897d0d3",  # 0010_label_groups.sql, applied to hoist_tracelab by cli:hussain
+}
 
 
 class MigrationFilesError(RuntimeError):

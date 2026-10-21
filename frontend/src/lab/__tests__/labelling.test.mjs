@@ -186,3 +186,73 @@ test('Hoistra Users & access: no access by default, access with a Trace Lab role
   assert.equal(Lg.accessValue({ status: 'removed', role: 'tester' }), '');
   assert.ok(html(T.AccessView, { admin: true, inputId: 'x' }).includes('Company admins always have Trace Lab access'));
 });
+
+// ── 21 Oct 2026: what should happen and when, several steps labelled together, delete on All labels ──────────────────
+const G1 = { id: 'g1r', lineage_id: 'g1r', group_id: 'grp1', step_key: 't9:q1:query', label: 'wrong', note: 'Stay in the company.',
+  expected: 'Filter to this company\'s vendors', only_if: 'the question names a vendor', reviewer_id: 'me', reviewer_email: 'me@x.test',
+  reviewer_role: 'platform', at: '2026-10-21T10:00:00Z', turn_id: 't9', conversation_key: 'c1', question: 'Which vendors are blocked?', step_title: 'count' };
+const G2 = Object.assign({}, G1, { id: 'g2r', lineage_id: 'g2r', step_key: 't9:root:answer', expected: 'List only blocked vendors', only_if: null });
+
+test('a group covers its steps by number, said as "Steps 3 and 4"', () => {
+  const steps = Lg.stepsOf(REC);
+  assert.deepEqual(Lg.groupsOf([G2, G1, L2], steps), { grp1: [3, 4] });
+  assert.equal(Lg.stepsText([3, 4]), 'Steps 3 and 4');
+  assert.equal(Lg.stepsText([2, 5, 9]), 'Steps 2, 5 and 9');
+  assert.equal(Lg.stepsText([7]), 'Step 7');
+  const v = Lg.labelView(G1, 'me');
+  assert.deepEqual([v.expected, v.onlyIf, v.group], ['Filter to this company\'s vendors', 'the question names a vendor', 'grp1']);
+});
+
+test('the label dialog also asks what should happen in the step and when, both optional', () => {
+  const d = { stepN: 3, stepText: 'Database query · count', quote: '', label: 'wrong', note: '', expected: 'Count this company only', onlyIf: '', saving: false, error: '' };
+  const out = html(Q.LabelDialog, { d, onPick() {}, onNote() {}, onField() {}, onSave() {}, onCancel() {} });
+  assert.ok(out.includes('What should happen in this step') && out.includes('Count this company only'));
+  assert.ok(out.includes('>Only if<') && out.includes('e.g. the question names a vendor'));
+});
+
+test('several steps together: one label and note, and for each step what should happen and when', () => {
+  const g = { items: [{ key: 'a', n: 8, text: 'Database query · count', expected: '', onlyIf: '' },
+    { key: 'b', n: 9, text: 'Database query · focus', expected: 'Only certificates', onlyIf: 'a vendor is named' }], label: null, note: '', saving: false, error: '' };
+  const out = html(Q.GroupDialog, { g, onPick() {}, onNote() {}, onItem() {}, onSave() {}, onCancel() {} });
+  assert.ok(out.includes('Label 2 steps together') && out.includes('Steps 8 and 9: one label and note for all of them'));
+  assert.equal((out.match(/What should happen in this step/g) || []).length, 2, 'per step');
+  assert.ok(out.includes('Step 9 · Database query · focus') && out.includes('Only certificates') && out.includes('a vendor is named'));
+  assert.match(out, /<button[^>]*disabled=""[^>]*>Save 2 labels</, 'a label must be chosen first');
+});
+
+test('choosing steps: a tick box on every step and a bar that labels the chosen ones together', () => {
+  const steps = Lg.stepsOf(REC);
+  const base = { conv: { active: REC, turns: [{ turn_id: 't9' }] }, steps, byStep: {}, busy: false, errors: {}, onTurn() {}, onSelect() {},
+    onWhole() {}, onEdit() {}, onRemove() {}, onPickMode() {}, onPick() {}, onGroup() {}, groups: {} };
+  const idle = html(Q.Flow, Object.assign({}, base, { picking: false, picked: {} }));
+  assert.ok(idle.includes('Label several steps together') && !idle.includes('role="checkbox"'));
+  const one = html(Q.Flow, Object.assign({}, base, { picking: true, picked: { 't9:q1:query': true } }));
+  assert.equal((one.match(/role="checkbox"/g) || []).length, 4);
+  assert.match(one, /role="checkbox" aria-checked="true" aria-label="Choose step 3"/);
+  assert.match(one, /<button[^>]*disabled=""[^>]*>Choose at least 2 steps</);
+  const two = html(Q.Flow, Object.assign({}, base, { picking: true, picked: { 't9:q1:query': true, 't9:m1:call': true } }));
+  assert.ok(two.includes('Label 2 steps together') && two.includes('2 of up to 30 steps chosen'));
+});
+
+test('under a step: what should happen, when, and the steps it was labelled with; my group can be removed', () => {
+  const steps = Lg.stepsOf(REC);
+  const groups = Lg.groupsOf([G1, G2], steps);
+  const out = html(Q.StepLabels, { items: [Lg.labelView(G1, 'me')], busy: false, onEdit() {}, onRemove() {}, groups, onRemoveGroup() {} });
+  assert.ok(out.includes('Should: </strong>Filter to this company') && out.includes('Only if: </strong>the question names a vendor'));
+  assert.ok(out.includes('Labelled together: Steps 3 and 4') && out.includes('>Remove the group<'));
+  const theirs = html(Q.StepLabels, { items: [Lg.labelView(G1, 'someone-else')], busy: false, onEdit() {}, onRemove() {}, groups, onRemoveGroup() {} });
+  assert.ok(!theirs.includes('Remove the group'));
+});
+
+test('all labels: one Note column also says what should happen and when; Delete only on my labels, a group alone or whole', () => {
+  const base = { rows: [G1, Object.assign({}, L2, { turn_id: 't9' })], onOpen() {}, me: 'me', busy: false, onAsk() {}, onDelete() {} };
+  const out = html(A.LabelsTable, Object.assign({}, base, { confirming: null }));
+  assert.ok(!out.includes('>What should happen<'), 'no column of its own');
+  assert.match(out, /Stay in the company\.[\s\S]*Should: <\/strong>Filter to this company[\s\S]*Only if: <\/strong>the question names a vendor/);
+  assert.ok(out.includes('Labelled with other steps'));
+  assert.equal((out.match(/>Delete</g) || []).length, 1, 'only on my own label');
+  const asking = html(A.LabelsTable, Object.assign({}, base, { confirming: 'g1r' }));
+  assert.ok(asking.includes('>This step<') && asking.includes('>Whole group<') && asking.includes('>Cancel<'));
+  const single = html(A.LabelsTable, Object.assign({}, base, { rows: [Object.assign({}, L1, { turn_id: 't9' })], confirming: 'l1' }));
+  assert.ok(single.includes('Delete it?') && single.includes('>Yes<') && single.includes('>No<') && !single.includes('Whole group'));
+});
