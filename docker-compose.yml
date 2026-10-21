@@ -1,0 +1,28 @@
+# Hoist Trace Lab on its own. Copy .env.example to .env, fill it in, then:
+#
+#   docker compose up -d --build
+#
+# The page is then at http://localhost:${TRACE_LAB_PORT:-8080}/lab/ . Trace Lab reads Hoistra's database (DB_URL,
+# read-only) and keeps its own records where TRACE_LAB_DB_URL points (README.md, "The database").
+# Boot only checks the schema (TRACE_LAB_SCHEMA=verify); migrations are applied by hand (README.md, step 3).
+services:
+  trace-lab:
+    build: .
+    image: hoist-trace-lab:latest
+    env_file:
+      - .env
+    environment:
+      TRACE_LAB_SCHEMA: verify
+      TRACE_LAB_ENABLED: "1"
+      ACTIVITY_LOG_ENABLED: "false"
+      # Nothing Trace Lab runs may start a data migration: the migration service URL points at a dead port.
+      MIGRATION_BASE_URL: http://127.0.0.1:9
+      # Every downstream call (identity lookups, the golden runs' chat) goes through Trace Lab's loopback-only
+      # allow-list proxy, which forwards reads to the TRACE_LAB_UPSTREAM_* addresses in .env and refuses the rest.
+      UDR_BASE_URL: http://127.0.0.1:8010/__proxy/udr
+      OPERATIONS_INTELLIGENCE_BASE_URL: http://127.0.0.1:8010/__proxy/oi
+      WO_MANAGEMENT_BASE_URL: http://127.0.0.1:8010/__proxy/wom
+      DOC_RAG_BASE_URL: http://127.0.0.1:8010/__proxy/docrag
+    ports:
+      - "${TRACE_LAB_PORT:-8080}:8080"
+    restart: unless-stopped

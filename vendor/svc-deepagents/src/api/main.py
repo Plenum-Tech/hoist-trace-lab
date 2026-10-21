@@ -1,0 +1,270 @@
+"""
+BE4 — FastAPI application for svc-deepagents.
+Lifespan manages the singleton DeepAgentOrchestrator and DB session factory.
+
+Startup sequence:
+  1. Configure structlog (console or JSON based on DEBUG)
+  2. Initialise DB session factory (UDR + Compliance tools)
+  3. Initialise Postgres HITL checkpointer (if HITL_ENABLED=true)
+  4. Build the singleton DeepAgentOrchestrator
+  5. Serve on PORT (default 8008)
+"""
+import asyncio
+import os
+import time
+from contextlib import asynccontextmanager
+from typing import AsyncGenerator
+
+import structlog
+import uvicorn
+from fastapi import FastAPI, Request, Response
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+
+from ..http_client import caller_authorization
+from ..agents.orchestrator import DeepAgentOrchestrator
+from ..config import settings
+from ..database import init_session_factory
+from ..limiter import limiter
+from .routes.documents import router as documents_router
+from .routes.ingestion_cases import router as ingestion_cases_router
+from .routes.health import router as health_router
+from .routes.ingest_batch import router as ingest_batch_router
+from .routes.migration import router as migration_router
+from .routes.workflow import router as workflow_router
+from .routes.skill_lab import router as skill_lab_router
+from .routes.threads import router as threads_router
+from .routes.memories import router as memories_router
+from .routes.traces import router as traces_router
+
+log = structlog.get_logger(__name__)
+
+
+def _configure_logging() -> None:
+    import logging
+
+    debug = settings.debug
+    level = logging.DEBUG if debug else logging.INFO
+
+    shared_processors: list = [
+        structlog.contextvars.merge_contextvars,
+        structlog.processors.add_log_level,
+        structlog.processors.TimeStamper(fmt="iso"),
+        structlog.processors.StackInfoRenderer(),
+        structlog.processors.ExceptionRenderer(),
+    ]
+
+    renderer = structlog.dev.ConsoleRenderer(colors=True) if debug else structlog.processors.JSONRenderer()
+
+    structlog.configure(
+        processors=shared_processors + [renderer],
+        wrapper_class=structlog.make_filtering_bound_logger(level),
+        context_class=dict,
+        logger_factory=structlog.PrintLoggerFactory(),
+        cache_logger_on_first_use=True,
+    )
+    logging.basicConfig(format="%(message)s", level=level)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+    _configure_logging()
+
+    log.info(
+        "svc-deepagents.startup",
+        model=settings.openai_model,
+        port=settings.port,
+        hitl_enabled=settings.hitl_enabled,
+    )
+
+    # LangSmith tracing — set env vars so LangChain auto-instruments all calls
+    if settings.langsmith_tracing and settings.langsmith_api_key:
+        os.environ["LANGSMITH_TRACING"] = "true"
+        os.environ["LANGSMITH_API_KEY"] = settings.langsmith_api_key
+        os.environ["LANGSMITH_PROJECT"] = settings.langsmith_project
+        log.info("svc-deepagents.langsmith.enabled", project=settings.langsmith_project)
+    else:
+        log.info("svc-deepagents.langsmith.disabled")
+
+    # Initialise DB session factory for tools that need direct DB access
+    init_session_factory()
+    log.info("svc-deepagents.db.ready")
+
+    try:
+        from ..services.ingest_batch_service import init_ingest_batch_tables
+
+        await init_ingest_batch_tables()
+    except Exception as exc:
+        log.warning("svc-deepagents.ingest_batch_tables.failed", error=str(exc)[:300])
+
+    # Activity log table (append-only trail of agent inputs/outputs) — best effort.
+    try:
+        from ..agents import activity_log
+
+        await activity_log.ensure_table()
+    except Exception as exc:  # noqa: BLE001
+        log.warning("svc-deepagents.activity_log.failed", error=str(exc)[:300])
+    # The server-side record of every conversation (memory phase A); best-effort like the log.
+    from ..services import chat_memories, chat_threads
+
+    await chat_threads.ensure_tables()
+    await chat_memories.ensure_tables()
+    # Hoist Traces: every turn's span tree with cost (agents/trace.py); old span payloads purged.
+    from ..agents import trace as _trace
+
+    if await _trace.ensure_tables():
+        try:
+            await _trace.purge()
+        except Exception as exc:  # noqa: BLE001
+            log.warning("svc-deepagents.trace.purge_failed", error=str(exc)[:200])
+
+    # Initialise HITL Postgres checkpointer (optional)
+    checkpointer = None
+    _checkpointer_pool = None
+
+    if settings.hitl_enabled:
+        try:
+            from ..hitl.checkpointer import create_checkpointer
+            checkpointer, _checkpointer_pool = await create_checkpointer(settings.db_url)
+            log.info("svc-deepagents.hitl.ready")
+        except Exception as exc:
+            log.warning(
+                "svc-deepagents.hitl.init_failed",
+                error=str(exc),
+                detail="HITL disabled — continuing without checkpointer",
+            )
+            checkpointer = None
+            _checkpointer_pool = None
+
+    # Build the singleton orchestrator
+    app.state.orchestrator = DeepAgentOrchestrator(
+        openai_api_key=settings.openai_api_key,
+        model=settings.openai_model,
+        checkpointer=checkpointer,
+    )
+    log.info("svc-deepagents.orchestrator.ready")
+
+    # The record-question ontology (agents/ontology_qa.py) takes about a minute to build from
+    # the schema. Built here in the background, so the first question after a deploy does not
+    # wait for it; a question that arrives first simply waits on the same build.
+    async def _warm_ontology() -> None:
+        try:
+            from ..agents.ontology_qa import get_ontology
+
+            onto = await get_ontology()
+            log.info("svc-deepagents.ontology.ready", concepts=len(onto.concepts), rules=list(onto.derived))
+        except Exception as exc:  # noqa: BLE001
+            log.warning("svc-deepagents.ontology.warm_failed", error=str(exc)[:300])
+
+    app.state.ontology_warm = asyncio.create_task(_warm_ontology())
+
+    yield
+
+    # Shutdown — close the checkpointer pool if open
+    if _checkpointer_pool is not None:
+        try:
+            await _checkpointer_pool.close()
+            log.info("svc-deepagents.hitl.pool.closed")
+        except Exception as exc:
+            log.warning("svc-deepagents.hitl.pool.close_error", error=str(exc))
+
+    log.info("svc-deepagents.shutdown")
+
+
+app = FastAPI(
+    title="Plenum CAFM — DeepAgents Orchestration Service",
+    description=(
+        "Main orchestration layer for the Plenum CAFM platform. "
+        "Routes natural language requests across 38 CAFM tools in 6 agent domains. "
+        "Supports HITL (human-in-the-loop) approval gates for migration and rollback operations."
+    ),
+    version="1.1.0",
+    lifespan=lifespan,
+    docs_url="/docs",
+    redoc_url="/redoc",
+)
+
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000", "http://localhost:3001", "http://127.0.0.1:3000"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+@app.middleware("http")
+async def forward_caller_token(request: Request, call_next) -> Response:
+    """Carry the caller's bearer into everything this service does on their behalf.
+
+    Every call this service makes to operations-intelligence goes out as the USER, not as a
+    service — that is how the answer gets scoped to their company and buildings rather than to
+    everything. The token was picked up in three handlers by hand, and a route that forgot
+    simply called the next service with no Authorization header at all. Downstream answered
+    401 missing_token, the tool returned zero rows, and the agent reported it to the user as
+    "the compliance service could not be reached" — which reads as an outage rather than as a
+    request that was never authenticated.
+
+    /resume/{session_id} was one of those routes: it drives the same tools as /run-stateful,
+    with no token. Doing it here means a handler cannot forget, and a new route inherits it.
+
+    The header is copied verbatim, including when absent — setting None explicitly is what
+    stops one request inheriting the previous one's token from a reused context.
+    """
+    caller_authorization.set(request.headers.get("authorization"))
+    return await call_next(request)
+
+
+@app.middleware("http")
+async def request_timing(request: Request, call_next) -> Response:
+    start = time.perf_counter()
+    response: Response = await call_next(request)
+    elapsed_ms = round((time.perf_counter() - start) * 1000)
+    log.info(
+        "http.request",
+        method=request.method,
+        path=request.url.path,
+        status=response.status_code,
+        elapsed_ms=elapsed_ms,
+    )
+    return response
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    log.error(
+        "http.unhandled_error",
+        path=request.url.path,
+        exc_type=type(exc).__name__,
+        detail=str(exc)[:300],
+        exc_info=True,
+    )
+    return JSONResponse(status_code=500, content={"detail": "Internal server error"})
+
+
+# Routers
+app.include_router(health_router)
+app.include_router(workflow_router)
+app.include_router(threads_router)
+app.include_router(memories_router)
+app.include_router(traces_router)
+app.include_router(skill_lab_router)
+app.include_router(ingest_batch_router)
+app.include_router(migration_router)
+app.include_router(documents_router)
+app.include_router(ingestion_cases_router)
+
+
+if __name__ == "__main__":
+    uvicorn.run(
+        "src.api.main:app",
+        host="0.0.0.0",
+        port=settings.port,
+        reload=settings.debug,
+        log_config=None,
+    )

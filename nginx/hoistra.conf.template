@@ -1,0 +1,17 @@
+# Rendered only when HOISTRA_URL is set (docker/entrypoint.sh): the page signs in with Hoistra's own accounts at
+# /backend/ops-intelligence/api/auth/..., and the platform team's company picker reads
+# /backend/ops-intelligence/api/superadmin/companies. Both go to Hoistra unchanged.
+#
+# The address is looked up per request (resolver + a variable), not once at start: an address nginx cannot resolve
+# when the container starts does not stop it, and a changed IP is picked up within 30 seconds. With a variable and no
+# path, nginx passes the request's own path (/backend/ops-intelligence/...) to Hoistra as it is.
+location /backend/ops-intelligence/ {
+    resolver ${TRACE_LAB_RESOLVER} valid=30s ipv6=off;
+    set $hoistra_upstream ${HOISTRA_URL};
+    proxy_pass $hoistra_upstream;
+    proxy_ssl_server_name on;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_read_timeout 60s;
+}

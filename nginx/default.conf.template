@@ -1,0 +1,42 @@
+# Trace Lab's own front door (rendered by docker/entrypoint.sh with envsubst; only ${...} names listed there change).
+#
+# One address for the page, the service and Hoistra's sign-in, so the browser never makes a cross-origin call.
+server {
+    listen 8080;
+    server_name _;
+    client_max_body_size 10m;
+    # Redirects say only the path (/lab/), never this container's own port, which is not the public one.
+    absolute_redirect off;
+
+    # The page. Unknown paths under /lab/ get the page itself (it reads its own address).
+    location = / { return 302 /lab/; }
+    location = /lab { return 301 /lab/; }
+    location /lab/ {
+        root /srv/www;
+        try_files $uri $uri/ /lab/index.html;
+    }
+    location /lab/assets/ {
+        root /srv/www;
+        expires 30d;
+        add_header Cache-Control "public, immutable";
+    }
+
+    # The service's loopback-only proxy is for the service's own calls. It already refuses anything that is not
+    # loopback, so this is a second lock: it is never reachable from outside, whatever the headers.
+    location ^~ /backend/trace-lab/__proxy/ { return 404; }
+
+    # The Trace Lab service, prefix removed (the service is started with --root-path /backend/trace-lab).
+    # X-Forwarded-For and X-Real-IP are what tell the service a call came from outside.
+    location /backend/trace-lab/ {
+        proxy_pass http://127.0.0.1:8010/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
+    }
+
+    # Hoistra's sign-in (operations-intelligence), passed through when HOISTRA_URL is set.
+    include /etc/nginx/trace-lab-hoistra.conf;
+}
