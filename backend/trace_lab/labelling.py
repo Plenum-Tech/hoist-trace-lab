@@ -56,14 +56,16 @@ def _iso(v: Any) -> str | None:
 
 @dataclass(frozen=True)
 class Member:
-    """The caller as Trace Lab sees them, for one company."""
+    """The caller as Trace Lab sees them, for one company, or across every company (`all_companies`: the platform team
+    acting for no company, or a consultant)."""
     principal: Any
-    org: str
+    org: str | None
     user_id: str
     email: str | None
-    role: str            # a Trace Lab role, or "platform" for the platform team
+    role: str            # a Trace Lab role, "platform" for the platform team, "consultant" for a platform-wide reviewer
     status: str
     manages: bool
+    all_companies: bool = False
 
     @property
     def active(self) -> bool:
@@ -96,15 +98,26 @@ async def _member_head(conn: Any, org: str, uid: str, *, lock: bool = False) -> 
                                {"org": org, "uid": uid})).mappings().first()
 
 
-async def access(principal: Any, organization_id: str | None, *, register: bool = False) -> Member:
-    """Who the caller is in Trace Lab for the company the request acts for. `register` (the app's first call) records a
-    pending row for a person seen for the first time."""
+async def access(principal: Any, organization_id: str | None, *, register: bool = False,
+                 all_companies_ok: bool = False) -> Member:
+    """Who the caller is in Trace Lab for the company the request acts for. `all_companies_ok` (runs, labels, progress)
+    lets the platform team act for no company and see every company. A consultant (lab_platform_members) sees every
+    company and acts for the company a request names. `register` is kept for older callers and records nothing."""
     uid, email = str(principal.user_id), (principal.email or None)
     if principal.role == auth.SUPERADMIN:
         org = auth.acting_org(principal, organization_id)
         if org is None:
+            if all_companies_ok:
+                return Member(principal, None, uid, email, "platform", "active", True, True)
             raise db.http_error(400, "name_a_company", auth.NAME_A_COMPANY)
-        return Member(principal, org, uid, email, "platform", "active", True)
+        return Member(principal, org, uid, email, "platform", "active", True, True)
+    consultant = await platform_role(uid)
+    if consultant is not None:
+        named = auth._named(organization_id) if organization_id else None
+        own = str(principal.organization_id) if principal.organization_id else None
+        if consultant["status"] == "active":
+            return Member(principal, named or (None if all_companies_ok else own), uid, email, "consultant", "active",
+                          False, True)
     org = auth.acting_org(principal, organization_id)
     if org is None:
         raise db.http_error(403, "no_company", "Your account belongs to no company.")
@@ -116,6 +129,27 @@ async def access(principal: Any, organization_id: str | None, *, register: bool 
         return Member(principal, org, uid, email, "user", "none", False)
     role, status = head["lab_role"], head["status"]
     return Member(principal, org, uid, email, role, status, role == "admin" and status == "active")
+
+
+async def platform_role(uid: str) -> dict[str, Any] | None:
+    """The newest platform-wide Trace Lab role of a person (lab_platform_members, migration 0011), or None."""
+    async with db.lab_engine().connect() as conn:
+        row = (await conn.execute(text(
+            "SELECT lab_role, status, email, created_at FROM tracelab.lab_platform_members WHERE user_id = CAST(:uid AS uuid) "
+            "ORDER BY created_at DESC, id DESC LIMIT 1"), {"uid": uid})).mappings().first()
+    return dict(row) if row else None
+
+
+def for_org(m: Member, org: str | None) -> Member:
+    """The caller acting for the company `org` (a question's or an answer's): the platform team and a consultant may act
+    for any company; anyone else only for their own. NotFound otherwise, so another company's records stay unseen."""
+    if not org:
+        raise NotFound("question_not_found", "That question is not in Trace Lab.")
+    if m.all_companies:
+        return dataclasses.replace(m, org=str(org))
+    if str(org) != str(m.org):
+        raise NotFound("question_not_found", "That question is not in Trace Lab.")
+    return m
 
 
 def require_active(m: Member) -> Member:
@@ -137,7 +171,7 @@ def require_manager(m: Member) -> Member:
 
 def me_out(m: Member) -> dict[str, Any]:
     return {"user_id": m.user_id, "email": m.email, "organization_id": m.org, "role": m.role, "status": m.status,
-            "manages": m.manages}
+            "manages": m.manages, "all_companies": m.all_companies}
 
 
 async def list_members(m: Member) -> list[dict[str, Any]]:
@@ -242,7 +276,10 @@ async def get_question(m: Member, key: str, *, turn_id: str | None) -> dict[str,
 _LABEL_COLS = ("id::text AS id, organization_id::text AS organization_id, conversation_key, turn_id, step_key, step_kind, "
                "step_title, question, label, note, tombstone, reviewer_id::text AS reviewer_id, reviewer_email, "
                "reviewer_role, supersedes::text AS supersedes, created_at, coalesce(lineage_id, id)::text AS lineage_id, quote, "
-               "group_id::text AS group_id, expected, only_if")
+               "group_id::text AS group_id, expected, only_if, "
+               "(SELECT 'R' || lr.run_no || '-' || lq.seq_no FROM tracelab.lab_question_traces lt "
+               "JOIN tracelab.lab_questions lq ON lq.id = lt.question_id JOIN tracelab.lab_runs lr ON lr.id = lq.run_id "
+               "WHERE lt.turn_id = step_labels.turn_id ORDER BY lt.created_at, lr.run_no, lq.seq_no LIMIT 1) AS question_code")
 _LABEL_HEAD = (f"SELECT {_LABEL_COLS} FROM tracelab.step_labels WHERE organization_id = CAST(:org AS uuid) "
                "AND turn_id = :tid AND coalesce(lineage_id, id) = CAST(:lin AS uuid) AND superseded_by IS NULL")
 
@@ -256,13 +293,17 @@ def label_out(r: Any) -> dict[str, Any] | None:
             "label": r.get("label"), "note": r.get("note"), "cleared": bool(r.get("tombstone")),
             "reviewer_id": r["reviewer_id"], "reviewer_email": r.get("reviewer_email"),
             "reviewer_role": r["reviewer_role"], "edited": r.get("supersedes") is not None, "at": _iso(r.get("created_at")),
-            "group_id": r.get("group_id"), "expected": r.get("expected"), "only_if": r.get("only_if")}
+            "group_id": r.get("group_id"), "expected": r.get("expected"), "only_if": r.get("only_if"),
+            "question_code": r.get("question_code"), "organization_id": r.get("organization_id")}
 
 
-def validate_label(label: str, note: str | None, step_title: str | None) -> tuple[str | None, str | None]:
-    if label not in LABELS:
-        raise Invalid("bad_label", "Choose Right, Wrong or Not sure.")
+def validate_label(label: str | None, note: str | None, step_title: str | None) -> tuple[str | None, str | None]:
+    """A note is free text; the Right / Wrong / Not sure tag is optional (migration 0011), but a label needs one of them."""
     note = (note or "").strip() or None
+    if label is not None and label not in LABELS:
+        raise Invalid("bad_label", "Choose Right, Wrong or Not sure.")
+    if label is None and note is None:
+        raise Invalid("note_required", "Write a note.")
     if note is not None and len(note) > NOTE_MAX:
         raise Invalid("note_too_long", "Keep the note under 2,000 characters.")
     title = (step_title or "").strip()[:TITLE_MAX] or None
@@ -304,7 +345,18 @@ async def _turn(m: Member, turn_id: str) -> dict[str, Any]:
     return out
 
 
+OUTPUT_SUFFIX = "#output"
+
+
 def _step_kind(trace: dict[str, Any], step_key: str) -> str:
+    """The kind of the step a note is on. Besides a message or an agent, a note may be on a step's output block
+    ("<step>#output"), on the question as a whole ("<turn>:scenario") or on the orchestrator step ("<turn>:orchestrator")."""
+    tid = str(trace.get("id") or "")
+    if step_key in (f"{tid}:scenario", f"{tid}:orchestrator"):
+        return step_key.rsplit(":", 1)[1]
+    if step_key.endswith(OUTPUT_SUFFIX):
+        base = step_key[: -len(OUTPUT_SUFFIX)]
+        return "output" if base == f"{tid}:orchestrator" else _step_kind(trace, base) + "_output"
     for msg in trace.get("messages") or []:
         if msg.get("id") == step_key:
             kind = str(msg.get("role") or "")
@@ -511,16 +563,19 @@ async def _write(m: Member, turn_id: str, *, lineage: str | None, new_step: dict
 
 def _filters(m: Member, *, reviewer: str | None, role: str | None, label: str | None, since: datetime | None,
              until: datetime | None, q: str | None) -> tuple[str, dict[str, Any]]:
-    where = ["organization_id = CAST(:org AS uuid)", "superseded_by IS NULL", "NOT tombstone"]
-    p: dict[str, Any] = {"org": m.org}
-    if not m.manages:                                       # a labeller sees their own labels; admins see everyone's
+    where = ["superseded_by IS NULL", "NOT tombstone"]
+    p: dict[str, Any] = {}
+    if not m.all_companies or m.org:
+        where.insert(0, "organization_id = CAST(:org AS uuid)")
+        p["org"] = m.org
+    if not (m.manages or m.all_companies):                  # a labeller sees their own labels; admins see everyone's
         where.append("reviewer_id = CAST(:me AS uuid)")
         p["me"] = m.user_id
     elif reviewer:
         where.append("lower(coalesce(reviewer_email, '')) = lower(:reviewer)")
         p["reviewer"] = reviewer.strip()
     if role:
-        if role not in ROLES + ("platform",):
+        if role not in ROLES + ("platform", "consultant"):
             raise Invalid("bad_role", "Unknown Trace Lab role.")
         where.append("reviewer_role = :role")
         p["role"] = role
@@ -556,14 +611,14 @@ async def list_labels(m: Member, *, reviewer: str | None = None, role: str | Non
         counts = (await conn.execute(text(f"SELECT label, count(*) AS n FROM tracelab.step_labels WHERE {where} "
                                           "GROUP BY label"), p)).mappings().all()
     return {"total": int(total), "labels": [label_out(r) for r in rows], "by_label": {r["label"]: int(r["n"]) for r in counts},
-            "everyone": m.manages, "me": m.user_id}
+            "everyone": m.manages or m.all_companies, "me": m.user_id}
 
 
 CSV_HEADER = ("When (UTC)", "Question", "Step", "Step kind", "Selected text", "Label", "Note", "Who", "Trace Lab role",
               "Answer id", "Step id", "What should happen", "Only if", "Group")
 LABEL_TEXT = {"right": "Right", "wrong": "Wrong", "unsure": "Not sure"}
 ROLE_TEXT = {"domain_expert": "Domain expert", "tester": "Tester", "admin": "Admin", "user": "User",
-             "platform": "Platform team"}
+             "platform": "Platform team", "consultant": "Consultant"}
 
 
 def _cell(v: Any) -> str:

@@ -23,7 +23,7 @@ from fastapi import APIRouter, FastAPI
 
 from . import db, jobs, migrate, routes_conversations, routes_status
 from . import review_labels, routes_golden, routes_judges, routes_mode_proposals, routes_monitor, routes_review
-from . import routes_labelling, routes_taxonomy, spend
+from . import routes_labelling, routes_runs, routes_taxonomy, spend
 from .migrate import SchemaState
 from .settings import Settings, load
 
@@ -46,6 +46,7 @@ ROUTERS: list[APIRouter] = [
     routes_judges.router,
     routes_monitor.router,
     routes_labelling.router,
+    routes_runs.router,
 ]
 
 

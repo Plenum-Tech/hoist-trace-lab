@@ -1,6 +1,6 @@
 # svc-deepagents, vendored
 
-Taken from: Hoistra branch `eval-2`, commit `1684810` (0 uncommitted svc-deepagents files), on 2026-10-21.
+Taken from: Hoistra branch `eval-2`, commit `1684810` (0 uncommitted svc-deepagents files), on 2026-10-22.
 
 Trace Lab reuses Hoistra's svc-deepagents code as a library. Nothing here is edited. The image copies `src/` and
 `skills/` beside the Trace Lab service and puts both on `PYTHONPATH`. The Trace Lab code imports:

@@ -79,9 +79,12 @@ On a platform without compose, set those too. They are listed in `docker-compose
 ```sh
 docker compose up -d --build
 docker compose exec trace-lab python -m trace_lab.migrate status
-docker compose exec trace-lab python -m trace_lab.migrate apply --expect-db hoist_tracelab --through 0010 --applied-by bala
+docker compose exec trace-lab python -m trace_lab.migrate apply --expect-db hoist_tracelab --through 0011 --applied-by bala
 ```
 
+- On the shared Azure `hoist_tracelab`, 0001-0011 are already applied (0011 on 22 Oct 2026), so after a redeploy
+  `status` reports `ready` and nothing needs applying. An image older than 0011 reports `ahead` there and stays
+  unavailable until it is replaced.
 - Boot never changes the database. Until the migrations are applied, the service starts and reports itself
   unavailable (`status=absent`).
 - `apply` needs a terminal. It prints every statement, then asks you to type the database name before it runs

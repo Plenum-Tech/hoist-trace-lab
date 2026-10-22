@@ -71,6 +71,7 @@ SHIPPED_CHECKSUMS: dict[int, str] = {
     8: "7d2ede6d043ebe28ad088077bec812fe56e141c17b0eefe9772d8ecc6db716c6",  # 0008_step_labels.sql
     9: "56d1a49b40e2639a57358d4c0e38a598e4d5809100da9e4a15d3819181c5ddd2",  # 0009_label_quotes.sql
     10: "cbb9c34a2d63da1841c26056b27583141a93ceb245bb954d289d063b6897d0d3",  # 0010_label_groups.sql, applied to hoist_tracelab by cli:hussain
+    11: "caaeedb02d0b64b432346d681096a64de2a42977d56688082853385686764fce",  # 0011_runs.sql, applied to hoist_tracelab by cli:hussain
 }
 
 

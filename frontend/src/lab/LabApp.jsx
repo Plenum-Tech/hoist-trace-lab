@@ -1,36 +1,70 @@
-// LabApp — Trace Lab as its own place, for step labelling (20 Oct 2026). Opening: a stored lab session is refreshed,
-// else Sign in (the Hoistra email and password; an unverified email asks for its code). The platform team picks the
-// company to work in (kept on this computer); everyone else works in their own company. The service then says who the
-// person is in Trace Lab (/lab/me): company admins and the platform team go straight in; anyone else waits until a
-// company admin gives them a Trace Lab role. The workspace shows only Questions, All labels and, for admins, People;
-// the other Trace Lab screens stay built but hidden.
+// LabApp — Trace Lab as its own place (20 Oct 2026; runs, 22 Oct). Opening: a stored lab session is refreshed, else
+// Sign in (the Hoistra email and password; an unverified email asks for its code). There is no company level: the
+// platform team and a consultant see every company's runs, everyone else their own company's. The service says who the
+// person is in Trace Lab (/lab/me): company admins, the platform team and a consultant go straight in; anyone else waits
+// until a company admin gives them a Trace Lab role. The workspace: Runs (Runs -> Questions -> one answer's steps),
+// Labels (failure modes per run), Progress, Notes and, for admins, People. A run and question in view are kept in the
+// address (?run=R3&q=R3-12), so a link opens the same place.
 import React from 'react';
 import { authApi } from '../api/auth.js';
-import { superAdminApi } from '../api/superAdmin.js';
 import { setActingOrg } from '../api/client.js';
 import { createLabAuth } from './authFlow.js';
-import { access } from './session.js';
 import { labApi } from './labApi.js';
 import { ROLE_TEXT, errText } from './logic/labelling.js';
-import Questions from './Questions.jsx';
-import AllLabels from './AllLabels.jsx';
+import RunsPage from './Runs.jsx';
+import LabelsView from './LabelsView.jsx';
+import ProgressView from './ProgressView.jsx';
+import Notes from './Notes.jsx';
 import People from './People.jsx';
 
 const COMPANY_KEY = 'tracelab.company.v1';
 const store = () => { try { return window.localStorage; } catch (e) { return null; } };
 const locks = () => { try { return navigator.locks || null; } catch (e) { return null; } };
 
-// The workspace menu: labelling only. People is for company admins (and the platform team).
+// The workspace menu. People is for company admins (and the platform team).
 export function navFor(me) {
-  const items = [['questions', 'Questions'], ['labels', 'All labels']];
+  const items = [['runs', 'Runs'], ['labels', 'Labels'], ['progress', 'Progress'], ['notes', 'Notes']];
   if (me && me.manages) items.push(['people', 'People']);
   return items;
 }
 
-function readCompany() {
-  try { const c = JSON.parse(store().getItem(COMPANY_KEY) || 'null'); return c && 'id' in c ? c : null; } catch (e) { return null; }
+// The run (R3) of a question code (R3-12).
+export const runOf = (code) => { const m = /^\s*(R\d+)-\d+\s*$/i.exec(String(code || '')); return m ? m[1].toUpperCase() : null; };
+
+function readPlace() {
+  try {
+    const q = new URLSearchParams(window.location.search);
+    const run = (q.get('run') || '').toUpperCase() || null;
+    const question = (q.get('q') || '').toUpperCase() || null;
+    return { run: run || runOf(question), question, view: q.get('view') || null };
+  } catch (e) { return { run: null, question: null, view: null }; }
 }
-function keepCompany(c) { try { store().setItem(COMPANY_KEY, JSON.stringify(c)); } catch (e) { /* not kept */ } }
+function keepPlace(view, run, question) {
+  try {
+    const q = new URLSearchParams();
+    if (view && view !== 'runs') q.set('view', view);
+    if (run) q.set('run', run);
+    if (question) q.set('q', question);
+    const s = q.toString();
+    window.history.replaceState(null, '', window.location.pathname + (s ? '?' + s : ''));
+  } catch (e) { /* the address is a convenience */ }
+}
+
+// The run picker and Sync now in the top bar: every run the person may see, newest first.
+export function RunPicker({ runs, run, onRun, onSync, syncing, synced }) {
+  return (
+    <div className="lab-row lab-runbar">
+      <label className="lab-visually-hidden" htmlFor="lab-run-pick">{'Run'}</label>
+      <select id="lab-run-pick" className="lab-run-pick" value={run || ''} onChange={(e) => onRun(e.target.value || null)}>
+        <option value="">{'All runs'}</option>
+        {(runs || []).map((r) => <option key={r.code} value={r.code}>{r.code + ' · ' + r.title + ' · ' + (r.n_questions || 0) + ' questions'}</option>)}
+      </select>
+      <button type="button" className="lab-btn lab-btn-quiet lab-btn-sm" onClick={onSync} disabled={syncing}>{syncing ? 'Syncing…' : 'Sync now'}</button>
+      {synced ? <span className="lab-small" role="status">{synced}</span> : null}
+    </div>
+  );
+}
+
 
 export function Mark({ size }) {
   const n = size || 24;
@@ -150,27 +184,46 @@ export function Picker({ companies, error, chosen, onChoose, onCancel, companies
   );
 }
 
-export function Workspace({ user, me, place, view, onView, onSwitch, onSignOut }) {
-  const platform = access(user) === 'platform';
-  const company = place ? place.name : (user && user.organization_name) || 'Your company';
+export function Workspace({ user, me, view, onView, onSignOut }) {
+  const wide = !!(me && me.all_companies);
+  const company = wide ? 'All companies' : ((user && user.organization_name) || 'Your company');
   const items = navFor(me);
-  const current = items.some(([k]) => k === view) ? view : 'questions';
-  // "Open" on All labels: the question, the turn and the step to show on Questions. Another company starts afresh.
-  const [focus, setFocus] = React.useState(null);
-  React.useEffect(() => { setFocus(null); }, [place && place.id]);
-  const openLabel = (x) => { setFocus({ key: x.conversation_key, turn: x.turn_id, step: x.step_key }); onView('questions'); };
+  const current = items.some(([k]) => k === view) ? view : 'runs';
+  const start = React.useRef(readPlace());
+  const [run, setRun] = React.useState(start.current.run);
+  const [question, setQuestion] = React.useState(start.current.question);
+  const [runs, setRuns] = React.useState(null);
+  const [syncing, setSyncing] = React.useState(false);
+  const [synced, setSynced] = React.useState('');
+  const [stamp, setStamp] = React.useState(0);
+  const loadRuns = React.useCallback(() => labApi.runs({ limit: 200 })
+    .then((out) => setRuns((out && out.runs) || [])).catch(() => setRuns([])), []);
+  React.useEffect(() => { loadRuns(); }, [loadRuns]);
+  React.useEffect(() => { keepPlace(current, run, question); }, [current, run, question]);
+  const pickRun = (code) => { setRun(code); setQuestion(null); };
+  const openQuestion = (code) => { const r = runOf(code); if (!r) return; setRun(r); setQuestion(code); onView('runs'); };
+  const sync = async () => {
+    setSyncing(true); setSynced('');
+    try {
+      const out = await labApi.syncRuns();
+      const n = (out && out.new_questions) || 0;
+      setSynced(n ? n + (n === 1 ? ' new question' : ' new questions') + (out.more ? ', more to come: sync again' : '') : 'Up to date');
+      await loadRuns();
+      setStamp((x) => x + 1);
+    } catch (e) {
+      setSynced('Sync failed: ' + errText(e));
+    } finally {
+      setSyncing(false);
+    }
+  };
   return (
     <div className="lab-shell">
       <div className="lab-head">
         <header className="lab-bar">
           <div className="lab-row">
             <Mark size={22} />
-            {platform ? (
-              <button type="button" className="lab-switch" onClick={onSwitch} aria-label="Change company">
-                {company}
-                <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="M3 4.5 6 7.5 9 4.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
-              </button>
-            ) : <span className="lab-company">{company}</span>}
+            <span className="lab-company">{company}</span>
+            <RunPicker runs={runs} run={run} onRun={pickRun} onSync={sync} syncing={syncing} synced={synced} />
           </div>
           <div className="lab-row lab-bar-right">
             <span>{(user && user.email) + (me && me.role ? ' · ' + (ROLE_TEXT[me.role] || me.role) : '')}</span>
@@ -184,26 +237,25 @@ export function Workspace({ user, me, place, view, onView, onSwitch, onSignOut }
           ))}
         </nav>
       </div>
-      <main className={'lab-main' + (current === 'questions' ? ' lab-main-split' : '')} key={place ? String(place.id) : 'own'}>
-        {current === 'questions' ? <Questions focus={focus} /> : null}
-        {current === 'labels' ? <AllLabels onOpen={openLabel} onQuestions={() => onView('questions')} /> : null}
-        {current === 'people' ? <People /> : null}
+      <main className={'lab-main' + (current === 'runs' && run ? ' lab-main-split' : '')} key={'v' + stamp}>
+        {current === 'runs' ? <RunsPage me={me} run={run} onRun={pickRun} question={question} onQuestion={setQuestion} /> : null}
+        {current === 'labels' ? <LabelsView me={me} run={run || (runs && runs[0] ? runs[0].code : null)} onOpenQuestion={openQuestion} /> : null}
+        {current === 'progress' ? <ProgressView me={me} run={run} /> : null}
+        {current === 'notes' ? <Notes me={me} onOpenQuestion={openQuestion} /> : null}
+        {current === 'people' ? <People me={me} /> : null}
       </main>
     </div>
   );
 }
 
 export default function LabApp() {
-  const [phase, setPhase] = React.useState('booting');   // booting | signin | code | picker | checking | waiting | work
+  const [phase, setPhase] = React.useState('booting');   // booting | signin | code | checking | waiting | work
   const [user, setUser] = React.useState(null);
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState('');
   const [email, setEmail] = React.useState('');
-  const [place, setPlace] = React.useState(null);
-  const [companies, setCompanies] = React.useState(null);
-  const [companiesError, setCompaniesError] = React.useState('');
-  // A shared link (?tl=runs…) opens on that screen; a plain /lab/ opens on Home. parseLink is null with no link.
-  const [view, setView] = React.useState('questions');
+  // A shared link (?view=labels&run=R3) opens on that screen; a plain /lab/ opens on Runs.
+  const [view, setView] = React.useState(() => readPlace().view || 'runs');
   const [me, setMe] = React.useState(null);
   const [meError, setMeError] = React.useState('');
   const authRef = React.useRef(null);
@@ -226,26 +278,16 @@ export default function LabApp() {
     }
   }, []);
 
-  const route = React.useCallback((u) => {
-    if (access(u) === 'platform') {
-      const kept = readCompany();
-      if (kept && kept.id) { setActingOrg(kept.id); setPlace(kept); check(); return; }
-      setPhase('picker');
-      return;
-    }
-    setActingOrg(null); setPlace(null); check();
+  // No company level any more: the platform team acts for no company (every company), so nothing is kept or picked.
+  const route = React.useCallback(() => {
+    try { store().removeItem(COMPANY_KEY); } catch (e) { /* nothing kept */ }
+    setActingOrg(null); check();
   }, [check]);
 
   React.useEffect(() => {
     auth.boot().then((ok) => { if (ok) route(auth.user()); else setPhase('signin'); });
   }, []);
 
-  React.useEffect(() => {
-    if (phase !== 'picker' || companies) return;
-    superAdminApi.listCompanies()
-      .then((out) => setCompanies(((out && out.companies) || []).map((c) => ({ id: String(c.organization_id), name: c.name || c.organization_name || 'Unnamed company' }))))
-      .catch((e) => setCompaniesError((e && e.message) || 'the service did not answer'));
-  }, [phase, companies]);
 
   const signIn = async (em, pw) => {
     setBusy(true); setError(''); setEmail(em);
@@ -262,16 +304,11 @@ export default function LabApp() {
     if (out.error) { setError(out.error); return; }
     route(auth.user());
   };
-  const signOut = async () => { await auth.signOut(); setActingOrg(null); setPlace(null); setPhase('signin'); };
-  const choose = (c) => { keepCompany(c); setActingOrg(c.id); setPlace(c); setView('questions'); check(); };
+  const signOut = async () => { await auth.signOut(); setActingOrg(null); setPhase('signin'); };
 
   if (phase === 'booting') return <div className="lab-center"><p className="lab-small">{'Opening Trace Lab…'}</p></div>;
   if (phase === 'signin' || phase === 'code') {
     return <SignIn busy={busy} error={error} email={email} code={phase === 'code'} onSubmit={signIn} onCode={verify} />;
-  }
-  if (phase === 'picker') {
-    return <Picker companies={companies} error={companiesError} chosen={place} companiesOnly onChoose={choose}
-      onCancel={place ? () => setPhase(me && me.status === 'active' ? 'work' : 'checking') : null} />;
   }
   if (phase === 'checking') {
     return (
@@ -284,5 +321,5 @@ export default function LabApp() {
     );
   }
   if (phase === 'waiting') return <Waiting me={me} onSignOut={signOut} onRetry={check} />;
-  return <Workspace user={user} me={me} place={place} view={view} onView={setView} onSwitch={() => setPhase('picker')} onSignOut={signOut} />;
+  return <Workspace user={user} me={me} view={view} onView={setView} onSignOut={signOut} />;
 }

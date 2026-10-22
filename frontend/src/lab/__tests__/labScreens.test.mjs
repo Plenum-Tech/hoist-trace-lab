@@ -44,10 +44,20 @@ test('the picker: Platform view first, then each company, the chosen one checked
   assert.ok(html(L.Picker, { companies: null, onChoose: () => {} }).includes('Reading the companies'));
 });
 
-test('the menu is labelling only: Questions and All labels, plus People for admins', () => {
-  assert.deepEqual(L.navFor({ manages: false }).map((x) => x[0]), ['questions', 'labels']);
-  assert.deepEqual(L.navFor({ manages: true }).map((x) => x[0]), ['questions', 'labels', 'people']);
-  assert.deepEqual(L.navFor(null).map((x) => x[1]), ['Questions', 'All labels']);
+test('the menu: Runs, Labels, Progress and Notes, plus People for admins; a question code names its run', () => {
+  assert.deepEqual(L.navFor({ manages: false }).map((x) => x[0]), ['runs', 'labels', 'progress', 'notes']);
+  assert.deepEqual(L.navFor({ manages: true }).map((x) => x[0]), ['runs', 'labels', 'progress', 'notes', 'people']);
+  assert.deepEqual(L.navFor(null).map((x) => x[1]), ['Runs', 'Labels', 'Progress', 'Notes']);
+  assert.equal(L.runOf('r3-12'), 'R3');
+  assert.equal(L.runOf('R3'), null);
+});
+
+test('the top bar: every run the person may see, newest first, and Sync now', () => {
+  const out = html(L.RunPicker, { runs: [{ code: 'R4', title: 'ann@a.test · 2026-10-21', n_questions: 3 },
+    { code: 'R3', title: 'support batch', n_questions: 250 }], run: 'R3', onRun() {}, onSync() {}, syncing: false, synced: '2 new questions' });
+  assert.ok(out.includes('All runs') && out.includes('R4 · ann@a.test · 2026-10-21 · 3 questions') && out.includes('R3 · support batch · 250 questions'));
+  assert.match(out, /<option value="R3" selected="">/);
+  assert.ok(out.includes('Sync now') && out.includes('2 new questions'));
 });
 
 test('no access: who signed in and that their company admin turns Trace Lab on in Hoistra; a turned-off person is told so', () => {

@@ -55,7 +55,7 @@ class MemberBody(BaseModel):
 
 class LabelBody(BaseModel):
     step_key: str | None = Field(None, min_length=1, max_length=300)
-    label: str = Field(..., max_length=20)
+    label: str | None = Field(None, max_length=20)
     note: str | None = Field(None, max_length=4000)
     step_title: str | None = Field(None, max_length=1000)
     quote: str | None = Field(None, max_length=4000)
@@ -73,7 +73,7 @@ class GroupItem(BaseModel):
 
 
 class GroupBody(BaseModel):
-    label: str = Field(..., max_length=20)
+    label: str | None = Field(None, max_length=20)
     note: str | None = Field(None, max_length=4000)
     items: list[GroupItem] = Field(..., min_length=1, max_length=60)
 
@@ -81,7 +81,7 @@ class GroupBody(BaseModel):
 @router.get("/lab/me")
 async def lab_me(organization_id: str | None = Query(None, max_length=64), principal: Principal = auth.caller,
                  _ready: Any = Depends(db.require_ready)) -> dict[str, Any]:
-    m = await labelling.access(principal, organization_id, register=True)
+    m = await labelling.access(principal, organization_id, register=True, all_companies_ok=True)
     return {"ok": True, "me": labelling.me_out(m)}
 
 

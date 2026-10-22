@@ -8,7 +8,7 @@ Run it by hand, as the README at the repository root describes ("Deploy", step 1
 inside the running container:
 
 ```sh
-docker compose exec trace-lab python -m trace_lab.migrate apply --expect-db hoist_tracelab --through 0010 --applied-by NAME
+docker compose exec trace-lab python -m trace_lab.migrate apply --expect-db hoist_tracelab --through 0011 --applied-by NAME
 ```
 
 Nothing here runs by itself. Boot only checks the schema (`TRACE_LAB_SCHEMA=verify`).
