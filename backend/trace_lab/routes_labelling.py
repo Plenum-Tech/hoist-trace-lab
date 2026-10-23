@@ -40,6 +40,12 @@ async def _member(organization_id: str | None = Query(None, max_length=64), prin
     return await labelling.access(principal, organization_id)
 
 
+async def _any_company(organization_id: str | None = Query(None, max_length=64), principal: Principal = auth.caller,
+                       _ready: Any = Depends(db.require_ready)) -> labelling.Member:
+    """The notes lists: the platform team and a consultant read every company's notes without naming one."""
+    return await labelling.access(principal, organization_id, all_companies_ok=True)
+
+
 async def _call(coro):
     try:
         return await coro
@@ -161,7 +167,7 @@ async def lab_all_labels(reviewer: str | None = Query(None, max_length=320), rol
                          label: str | None = Query(None, max_length=20), since: datetime | None = Query(None),
                          until: datetime | None = Query(None), q: str | None = Query(None, max_length=200),
                          limit: int = Query(100, ge=1, le=500), offset: int = Query(0, ge=0, le=1_000_000),
-                         m: labelling.Member = Depends(_member)) -> dict[str, Any]:
+                         m: labelling.Member = Depends(_any_company)) -> dict[str, Any]:
     out = await _call(labelling.list_labels(m, **_list_args(reviewer, role, label, since, until, q), limit=limit,
                                             offset=offset))
     return {"ok": True, **out}
@@ -171,7 +177,7 @@ async def lab_all_labels(reviewer: str | None = Query(None, max_length=320), rol
 async def lab_all_labels_csv(reviewer: str | None = Query(None, max_length=320), role: str | None = Query(None, max_length=40),
                              label: str | None = Query(None, max_length=20), since: datetime | None = Query(None),
                              until: datetime | None = Query(None), q: str | None = Query(None, max_length=200),
-                             m: labelling.Member = Depends(_member)) -> Response:
+                             m: labelling.Member = Depends(_any_company)) -> Response:
     out = await _call(labelling.list_labels(m, **_list_args(reviewer, role, label, since, until, q),
                                             limit=labelling.LIST_MAX, offset=0))
     return Response(labelling.csv_text(out["labels"]), media_type="text/csv; charset=utf-8",

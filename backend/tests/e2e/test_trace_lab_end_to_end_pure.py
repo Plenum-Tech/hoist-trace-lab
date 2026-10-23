@@ -199,7 +199,7 @@ NOT_DRIVEN = {
     "/lab/turns/{turn_id}/step-label-groups/{group_id}": "same",
     "/lab/runs": "runs (22 Oct): covered by test_trace_lab_runs_sql", "/lab/runs/sync": "same", "/lab/runs/import": "same",
     "/lab/runs/{code}": "same", "/lab/runs/{code}/questions": "same", "/lab/runs/{code}/labels": "same",
-    "/lab/progress": "same", "/lab/q/{code}": "same", "/lab/q/{code}/expected": "same", "/lab/q/{code}/traces": "same",
+    "/lab/progress": "same", "/lab/q/{code}": "same", "/lab/q/{code}/expected": "same", "/lab/q/{code}/traces": "same", "/lab/q/{code}/candidates": "same",
     "/lab/q/{code}/cells": "same", "/lab/modes": "same", "/lab/modes/{lineage_id}": "same",
     "/lab/platform-members": "same",
 }

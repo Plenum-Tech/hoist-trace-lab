@@ -122,3 +122,18 @@ test('no answer linked yet; the note editor opens beside its block with the sele
   assert.match(row, /<button type="button" class="lab-btn lab-btn-sm" disabled="">Save</);
   assert.equal((open.match(/class="lab-ne"/g) || []).length, 1, 'one editor, beside its block');
 });
+
+test('linking an answer: recorded answers to pick from, the same question marked, a way out when none match', () => {
+  const picks = [
+    { turn_id: 'turn-77', question: 'Which vendors are blocked?', answer: 'ProudCastle Fire is blocked.', email: 'ann@a.test',
+      asked_at: '2026-10-21T10:00:00Z', ok: true, same: true },
+    { turn_id: 'turn-78', question: 'Which vendors are lapsed?', answer: null, email: 'bob@a.test', asked_at: '2026-10-20T10:00:00Z', ok: false, same: false }];
+  const out = html(Q.AnswerPicks, { picks, busy: '', onPick() {} });
+  assert.ok(out.includes('aria-label="Recorded answers you can link"') && out.includes('same question'));
+  assert.equal((out.match(/same question/g) || []).length, 1, 'only the word-for-word match is marked');
+  assert.ok(out.includes('ProudCastle Fire is blocked.') && out.includes('turn-78') && out.includes('failed'));
+  assert.equal((out.match(/>Link</g) || []).length, 2);
+  assert.match(html(Q.AnswerPicks, { picks, busy: 'turn-77', onPick() {} }), />Linking…</);
+  assert.ok(html(Q.AnswerPicks, { picks: [] }).includes('Ask the question in the chat first'));
+  assert.ok(html(Q.AnswerPicks, { picks: null }).includes('Reading the recorded answers'));
+});

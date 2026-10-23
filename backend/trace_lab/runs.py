@@ -474,6 +474,49 @@ async def link_trace(m: labelling.Member, code: str, turn_id: str) -> dict[str, 
     return await get_question(m, code, turn_id=turn_id)
 
 
+CANDIDATES_MAX = 50
+
+
+async def answer_candidates(m: labelling.Member, code: str, *, q: str | None = None, limit: int = 20) -> dict[str, Any]:
+    """Recorded answers a curator may link to a question, read-only from the chat's records: the same question asked
+    word for word first, then the newest. A search term matches the asked words, or a turn id exactly. Only the
+    question's company is searched; a platform-wide question searches every company for the platform team and the
+    consultant. Answers already linked to the question are left out."""
+    require_curator(m)
+    limit = max(1, min(int(limit), CANDIDATES_MAX))
+    term = (q or "").strip()[:200]
+    async with db.lab_engine().connect() as conn:
+        run, row = await _question_row(conn, m, code)
+        linked = {r[0] for r in (await conn.execute(text(
+            "SELECT turn_id FROM tracelab.lab_question_traces WHERE question_id = CAST(:qid AS uuid)"),
+            {"qid": row["id"]})).all()}
+    org = row.get("organization_id") or run.get("organization_id")
+    if org is not None:
+        org = labelling.for_org(m, org).org
+    elif not m.all_companies:
+        org = m.org
+    where = ["tt.started_at >= :since", "tt.user_id IS NOT NULL", f"({provenance.INFERRED_CHANNEL_SQL}) <> 'golden'"]
+    p: dict[str, Any] = {"since": datetime.now(timezone.utc) - timedelta(days=SYNC_DAYS), "qtext": row["question"],
+                         "lim": limit + len(linked)}
+    if org is not None:
+        where.append("tt.organization_id = CAST(:org AS uuid)")
+        p["org"] = org
+    if term:
+        where.append(f"({conversations._ASKER_WORDS_SQL} ILIKE :pat ESCAPE '\\' OR tt.turn_id = :term)")
+        p["pat"] = "%" + re.sub(r"([\\%_])", r"\\\1", term) + "%"
+        p["term"] = term
+    async with conversations._read() as conn:
+        rows = (await conn.execute(text(
+            f"SELECT tt.turn_id, tt.organization_id::text AS organization_id, tt.email, tt.started_at, tt.ok, tt.route, "
+            f"left({conversations._ASKER_WORDS_SQL}, 300) AS question, left(tt.answer, 240) AS answer, "
+            f"lower(btrim({conversations._ASKER_WORDS_SQL})) = lower(btrim(:qtext)) AS same "
+            f"FROM {TURNS} tt WHERE {' AND '.join(where)} ORDER BY same DESC, tt.started_at DESC LIMIT :lim"), p)).mappings().all()
+    out = [{"turn_id": r["turn_id"], "organization_id": r["organization_id"], "email": r["email"],
+            "asked_at": _iso(r["started_at"]), "ok": r["ok"], "route": r["route"], "question": r["question"],
+            "answer": r["answer"], "same": bool(r["same"])} for r in rows if r["turn_id"] not in linked]
+    return {"question": question_code(run["run_no"], row["seq_no"]), "candidates": out[:limit]}
+
+
 # ── import: Excel or CSV ─────────────────────────────────────────────────────────────────────────
 
 HEADERS = {

@@ -498,30 +498,70 @@ export function ExpectedAnswer({ expected, history, onSave, openAll }) {
   );
 }
 
-function LinkAnswer({ onLink }) {
+// The recorded answers a curator can link, as the picker lists them: the same question asked word for word is marked.
+export function AnswerPicks({ picks, busy, onPick }) {
+  if (!picks) return <p className="lab-small">{'Reading the recorded answers…'}</p>;
+  if (!picks.length) return <p className="lab-small">{'No recorded answers match. Ask the question in the chat first, then search again.'}</p>;
+  return (
+    <ul className="lab-qp-picks" aria-label="Recorded answers you can link">
+      {picks.map((c) => (
+        <li key={c.turn_id} className="lab-qp-pick">
+          <div className="lab-qp-pick-main">
+            <div className="lab-qp-pick-q">
+              {c.same ? <span className="lab-chip lab-chip-ok">{'same question'}</span> : null}
+              <span>{c.question || '(no question recorded)'}</span>
+            </div>
+            {c.answer ? <div className="lab-qp-pick-a">{c.answer}</div> : null}
+            <div className="lab-small">{[c.email, fmtWhen(c.asked_at), c.ok === false ? 'failed' : null, c.turn_id].filter(Boolean).join(' · ')}</div>
+          </div>
+          <button type="button" className="lab-btn lab-btn-sm" disabled={!!busy} onClick={() => onPick(c.turn_id)}>
+            {busy === c.turn_id ? 'Linking…' : 'Link'}
+          </button>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function LinkAnswer({ onLink, onSearch }) {
   const [f, setF] = React.useState(null);
-  if (!f) return <button type="button" className="lab-link" onClick={() => setF({ tid: '', busy: false, error: '' })}>{'Link an answer'}</button>;
-  const submit = async (e) => {
-    e.preventDefault();
-    const tid = f.tid.trim();
+  const seq = React.useRef(0);
+  const search = React.useCallback(async (term) => {
+    const mine = ++seq.current;
+    setF((c) => (c ? Object.assign({}, c, { picks: null, error: '' }) : c));
+    try {
+      const out = await (onSearch || (async () => ({ candidates: [] })))(term);
+      if (mine === seq.current) setF((c) => (c ? Object.assign({}, c, { picks: (out && out.candidates) || [] }) : c));
+    } catch (err) {
+      if (mine === seq.current) setF((c) => (c ? Object.assign({}, c, { picks: [], error: errText(err) }) : c));
+    }
+  }, [onSearch]);
+  const open = () => { setF({ term: '', picks: null, busy: '', error: '' }); search(''); };
+  if (!f) return <button type="button" className="lab-link" onClick={open}>{'Link an answer'}</button>;
+  const pick = async (tid) => {
     if (!tid || f.busy) return;
-    setF(Object.assign({}, f, { busy: true, error: '' }));
+    setF((c) => Object.assign({}, c, { busy: tid, error: '' }));
     try {
       await (onLink || resolved)(tid);
       setF(null);
     } catch (err) {
-      setF((c) => (c ? Object.assign({}, c, { busy: false, error: errText(err) }) : c));
+      setF((c) => (c ? Object.assign({}, c, { busy: '', error: errText(err) }) : c));
     }
   };
+  const submit = (e) => { e.preventDefault(); search(f.term.trim()); };
   return (
-    <form className="lab-qp-link" onSubmit={submit} onKeyDown={(e) => { if (e.key === 'Escape' && !f.busy) setF(null); }}>
-      <label className="lab-visually-hidden" htmlFor="lab-qp-link-turn">{'Turn id of the recorded answer'}</label>
-      <input id="lab-qp-link-turn" className="lab-input" type="text" maxLength={200} value={f.tid} placeholder="Turn id of the recorded answer"
-        onChange={(e) => { const tid = e.target.value; setF((c) => (c ? Object.assign({}, c, { tid }) : c)); }} disabled={f.busy} autoFocus />
-      <button type="submit" className="lab-btn lab-btn-sm" disabled={f.busy || !f.tid.trim()}>{f.busy ? 'Linking…' : 'Link'}</button>
-      <button type="button" className="lab-btn lab-btn-quiet lab-btn-sm" onClick={() => setF(null)} disabled={f.busy}>{'Cancel'}</button>
+    <div className="lab-qp-linkbox" onKeyDown={(e) => { if (e.key === 'Escape' && !f.busy) setF(null); }}>
+      <form className="lab-qp-link" onSubmit={submit}>
+        <label className="lab-visually-hidden" htmlFor="lab-qp-link-turn">{'Search the recorded answers'}</label>
+        <input id="lab-qp-link-turn" className="lab-input" type="search" maxLength={200} value={f.term}
+          placeholder="Search words, or paste a turn id" disabled={!!f.busy} autoFocus
+          onChange={(e) => { const term = e.target.value; setF((c) => (c ? Object.assign({}, c, { term }) : c)); }} />
+        <button type="submit" className="lab-btn lab-btn-quiet lab-btn-sm" disabled={!!f.busy}>{'Search'}</button>
+        <button type="button" className="lab-btn lab-btn-quiet lab-btn-sm" onClick={() => setF(null)} disabled={!!f.busy}>{'Cancel'}</button>
+      </form>
       {f.error ? <div role="alert" className="lab-error">{f.error}</div> : null}
-    </form>
+      <AnswerPicks picks={f.picks} busy={f.busy} onPick={pick} />
+    </div>
   );
 }
 
@@ -578,7 +618,7 @@ function NoAnswer({ active, curator }) {
 }
 
 const DEFAULT_ON = Object.freeze({
-  turn: noop, link: resolved, saveExpected: resolved, saveScenario: resolved, select: noop, openEditor: noop, blockUp: noop,
+  turn: noop, link: resolved, candidates: async () => ({ candidates: [] }), saveExpected: resolved, saveScenario: resolved, select: noop, openEditor: noop, blockUp: noop,
   blockDouble: noop, editorText: noop, editorSave: noop, editorCancel: noop, editNote: noop, askDelete: noop, deleteNote: noop
 });
 
@@ -645,7 +685,7 @@ export function QuestionView(props) {
             ))}
           </div>
         ) : <span className="lab-small">{'None yet'}</span>}
-        {curator ? <LinkAnswer onLink={on.link} /> : null}
+        {curator ? <LinkAnswer onLink={on.link} onSearch={on.candidates} /> : null}
       </section>
 
       {turnId && !missing ? (
@@ -741,6 +781,7 @@ export default function QuestionPage({ code, me, onChanged, onLinked }) {
 
   const fns = {
     turn: (tid) => { setEditor(null); setSelected(null); setErrors({}); setConfirming(null); load(tid); },
+    candidates: (term) => labApi.answerCandidates(code, term),
     link: async (tid) => {
       const out = await labApi.linkTrace(code, tid);
       setSt({ data: out || null, loading: false, error: '' });

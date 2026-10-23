@@ -51,6 +51,7 @@ export const labApi = {
   q: (code, turn) => call('GET', '/lab/q/' + enc(code), { query: turn ? { turn } : {} }),
   setExpected: (code, body) => call('PUT', '/lab/q/' + enc(code) + '/expected', { body }),
   linkTrace: (code, turnId) => call('POST', '/lab/q/' + enc(code) + '/traces', { body: { turn_id: turnId } }),
+  answerCandidates: (code, q) => call('GET', '/lab/q/' + enc(code) + '/candidates', { query: q ? { q } : {} }),
   setCell: (code, mode, value) => call('PUT', '/lab/q/' + enc(code) + '/cells', { body: { mode, value } }),
   modes: () => call('GET', '/lab/modes'),
   addMode: (body) => call('POST', '/lab/modes', { body }),

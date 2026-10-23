@@ -156,6 +156,12 @@ async def lab_link_trace(code: str, body: TraceIn, m: labelling.Member = Depends
     return {"ok": True, **await _call(runs.link_trace(m, code, body.turn_id))}
 
 
+@router.get("/lab/q/{code}/candidates")
+async def lab_answer_candidates(code: str, q: str | None = Query(None, max_length=200), limit: int = Query(20, ge=1, le=50),
+                                m: labelling.Member = Depends(_wide)) -> dict[str, Any]:
+    return {"ok": True, **await _call(runs.answer_candidates(m, code, q=q, limit=limit))}
+
+
 @router.put("/lab/q/{code}/cells")
 async def lab_set_cell(code: str, body: CellIn, m: labelling.Member = Depends(_wide)) -> dict[str, Any]:
     return {"ok": True, "cell": await _call(runs.set_cell(m, code, mode=body.mode, value=body.value))}

@@ -57,7 +57,7 @@ export function RunPicker({ runs, run, onRun, onSync, syncing, synced }) {
       <label className="lab-visually-hidden" htmlFor="lab-run-pick">{'Run'}</label>
       <select id="lab-run-pick" className="lab-run-pick" value={run || ''} onChange={(e) => onRun(e.target.value || null)}>
         <option value="">{'All runs'}</option>
-        {(runs || []).map((r) => <option key={r.code} value={r.code}>{r.code + ' · ' + r.title + ' · ' + (r.n_questions || 0) + ' questions'}</option>)}
+        {(runs || []).map((r) => <option key={r.code} value={r.code}>{r.code + ' · ' + r.title + ' · ' + (r.n_questions || 0) + (r.n_questions === 1 ? ' question' : ' questions')}</option>)}
       </select>
       <button type="button" className="lab-btn lab-btn-quiet lab-btn-sm" onClick={onSync} disabled={syncing}>{syncing ? 'Syncing…' : 'Sync now'}</button>
       {synced ? <span className="lab-small" role="status">{synced}</span> : null}

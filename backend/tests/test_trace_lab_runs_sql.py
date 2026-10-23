@@ -99,6 +99,8 @@ async def test_runs_from_live_answers_to_labels_and_progress(main_scratch, lab_s
     with pytest.raises(Invalid):
         await labelling.save_label(for_a, "turn-a2", step_key="turn-a2:scenario", label=None, note="  ", step_title=None)
     assert len((await runs.get_question(boss, "R1-2"))["labels"]) == 2
+    every_note = await labelling.list_labels(boss)               # the Notes page, with no company named
+    assert every_note["total"] == 2 and every_note["everyone"] and {x["question_code"] for x in every_note["labels"]} == {"R1-2"}
 
     exp = await runs.set_expected(boss, "R1-2", expected="Lists the 3 lapsed vendors.", expected_id="report_lapsed",
                                   evidence={"reference": "SELECT * FROM vendors", "type": "sql"})
@@ -121,8 +123,23 @@ async def test_runs_from_live_answers_to_labels_and_progress(main_scratch, lab_s
     tester = labelling.Member(admin.principal, ORG_A, admin.user_id, None, "tester", "active", False)
     with pytest.raises(Forbidden):
         await runs.import_file(tester, "x.csv", b"Question\nHi\n")
+    picks = await runs.answer_candidates(boss, "R5-1")             # a platform-wide question: every company, newest first
+    assert {c["turn_id"] for c in picks["candidates"]} == {"turn-a1", "turn-b1", "turn-c1", "turn-a2", "turn-a3"}, "golden left out"
+    assert [c["turn_id"] for c in (await runs.answer_candidates(boss, "R5-1", q="epc"))["candidates"]] == ["turn-c1"]
+    assert [c["turn_id"] for c in (await runs.answer_candidates(boss, "R5-1", q="turn-a2"))["candidates"]] == ["turn-a2"]
+    assert (await runs.answer_candidates(boss, "R5-1", q="100%_"))["candidates"] == [], "% and _ are literal"
+    own = (await runs.answer_candidates(admin, "R1-2"))["candidates"]
+    assert own and all(c["organization_id"] == ORG_A for c in own), "a company admin sees only the company's answers"
+    assert "turn-a2" not in {c["turn_id"] for c in own}, "the answer R1-2 already has is left out"
+    await _turn(main_scratch, "turn-same", org=ORG_B, uid=u3, email="cat@b.test", at=DAY1 - timedelta(hours=5),
+                question="what is the status of my order 3722? ")
+    first = (await runs.answer_candidates(boss, "R5-1"))["candidates"][0]
+    assert (first["turn_id"], first["same"]) == ("turn-same", True), "the same question, word for word, comes first"
+    with pytest.raises(Forbidden):
+        await runs.answer_candidates(tester, "R1-1")
     linked = await runs.link_trace(boss, "R5-1", "turn-c1")
     assert linked["active"]["turn_id"] == "turn-c1" and linked["active"]["organization_id"] == ORG_B
+    assert "turn-c1" not in {c["turn_id"] for c in (await runs.answer_candidates(boss, "R5-1"))["candidates"]}
 
     consultant_p = principal(ORG_A, "user", email="consult@plenum.test")
     await _users(main_scratch, (consultant_p, ORG_A))
